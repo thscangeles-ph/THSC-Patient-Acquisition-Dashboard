@@ -89,4 +89,16 @@ The queue follows the clinic's arrival flow:
 
 Screens refresh every 2 seconds. With Upstash, each open screen makes about one request every 2 seconds, so a full clinic day goes over the free tier; expect a small pay-as-you-go charge.
 
+### Install as an app on tablets and phones
+
+The Queue Board installs like an app: a home-screen icon that opens full screen, without the browser's address bar.
+
+- **Android tablets and phones (Chrome):** open the screen you want (e.g. `/queue/station`), then tap **Install app** in the header, or use Chrome's menu → **Install app** / **Add to Home screen**.
+- **iPad and iPhone (Safari):** tap **Share** → **Add to Home Screen** → **Add**. The **Install app** button shows these steps.
+- **Windows PC (Chrome or Edge):** click the install icon in the address bar, or use **Install app** in the header.
+
+The staff app opens on the front desk and has shortcuts to Stations and the TV display. A station tablet reopens on the last station it used. Patients who install from the check-in page get a separate patient app that opens on check-in, not on the staff PIN screen.
+
+If a device loses its connection, it shows a "No connection" page or a retry message and reconnects by itself. Queue data is never cached, so a screen never shows an old queue.
+
 **TV tips:** browsers only play sound after a tap, so tap *Turn on chime & voice announcements* once after opening the TV display. For an unattended TV, launch Chrome with `--kiosk --autoplay-policy=no-user-gesture-required`.

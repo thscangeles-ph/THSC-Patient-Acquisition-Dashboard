@@ -8,7 +8,9 @@ import { currentStep, servingAt, ticketLabel, waitingFor } from "@/lib/queue/red
 import { formatTime, formatWait, minutesSince, stationName } from "@/lib/queue/format";
 import type { ActionResult, QueueAction, QueueState, Visit } from "@/lib/queue/types";
 import { Panel, StaffShell } from "./staff-shell";
-import { useNow, useQueue } from "./use-queue";
+import { readStorage, useNow, useQueue, writeStorage } from "./use-queue";
+
+const STATION_KEY = "thsc-queue-station";
 
 export function StationScreen() {
   const queue = useQueue();
@@ -22,7 +24,8 @@ function Station({ state, dispatch }: { state: QueueState; dispatch: (action: Qu
   const now = useNow();
   const [error, setError] = useState("");
   const stations = state.settings.stations.filter((station) => station.active);
-  const code = stations.find((station) => station.code === params.get("s"))?.code ?? stations[0]?.code;
+  const wanted = params.get("s") ?? readStorage(STATION_KEY);
+  const code = stations.find((station) => station.code === wanted)?.code ?? stations[0]?.code;
   const station = stations.find((item) => item.code === code);
 
   if (!station) return <p className="py-20 text-center text-[#756b59]">No active stations. Add one in Front desk → Settings.</p>;
@@ -42,7 +45,7 @@ function Station({ state, dispatch }: { state: QueueState; dispatch: (action: Qu
         {stations.map((item) => {
           const count = waitingFor(state, item.code).length;
           return (
-            <button key={item.code} role="tab" aria-selected={item.code === station.code} type="button" onClick={() => router.replace(`${pathname}?s=${item.code}`)}
+            <button key={item.code} role="tab" aria-selected={item.code === station.code} type="button" onClick={() => { writeStorage(STATION_KEY, item.code); router.replace(`${pathname}?s=${item.code}`); }}
               className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition ${item.code === station.code ? "border-[#2f281c] bg-[#2f281c] text-white" : "border-[#e2d7c2] bg-[#fffefb] text-[#4c4436] hover:border-[#d8a321]"}`}>
               <span className="font-mono">{item.code}</span><span className={item.code === station.code ? "text-[#e8dec7]" : "text-[#756b59]"}>{item.name}</span>
               <span className={`rounded-full px-2 py-0.5 text-xs tabular-nums ${count ? "bg-[#d8a321] text-[#2f281c]" : "bg-[#efebe4] text-[#7d725f]"}`}>{count}</span>

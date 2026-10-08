@@ -1,0 +1,23 @@
+{
+  "id": "/queue",
+  "name": "THSC Queue Board",
+  "short_name": "THSC Queue",
+  "description": "Front desk, station and TV screens for The Heart Specialists Clinic queue.",
+  "start_url": "/queue",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f7f4ed",
+  "theme_color": "#2f281c",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Front desk", "url": "/queue", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Stations", "url": "/queue/station", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "TV display", "url": "/queue/display", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

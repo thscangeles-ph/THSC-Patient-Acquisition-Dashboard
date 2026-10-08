@@ -6,6 +6,7 @@ import { AlertCircle, KeyRound, LayoutDashboard, Monitor, QrCode, Stethoscope, U
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InstallAppButton } from "@/components/pwa";
 import type { QueueState } from "@/lib/queue/types";
 import type { useQueue } from "./use-queue";
 
@@ -57,7 +58,7 @@ export function StaffShell({ queue, active, title, actions, children }: { queue:
             <img src="/theheartspecialists.png" alt="The Heart Specialists Clinic logo" width="52" height="40" className="h-10 w-[52px] shrink-0 object-contain" />
             <div className="min-w-0"><p className="truncate text-xs font-semibold tracking-[0.08em] text-[#f0c864]">THE HEART SPECIALISTS CLINIC</p><h1 className="truncate text-lg font-bold tracking-tight">{title}</h1></div>
           </div>
-          <div className="flex items-center gap-3"><SyncBadge queue={queue} dark />{actions}</div>
+          <div className="flex items-center gap-3"><SyncBadge queue={queue} dark /><InstallAppButton className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white" />{actions}</div>
         </div>
         <nav className="mx-auto flex max-w-[1480px] gap-1 overflow-x-auto px-3 pb-2 lg:px-6" aria-label="Queue screens">
           {NAV.map((item) => (
