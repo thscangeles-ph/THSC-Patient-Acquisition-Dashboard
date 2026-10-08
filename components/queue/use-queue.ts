@@ -94,8 +94,9 @@ export function useQueue() {
       try {
         const { response, body } = await request(undefined, versionRef.current);
         if (cancelled) return;
+        // Single-device mode only when the server says so, or there is no queue API at all (e.g. a static export).
+        if (body.mode === "local" || (!detected && response.status === 404)) return startLocal();
         detected = true;
-        if (body.mode === "local") return startLocal();
         setMode("server");
         setOnline(true);
         if (!response.ok) setError(body.error || "The queue server could not be reached.");
@@ -105,9 +106,9 @@ export function useQueue() {
         }
       } catch {
         if (cancelled) return;
-        // No API at all (e.g. a static export): fall back to this device only.
-        if (!detected) return startLocal();
+        // A network failure is never a reason to switch to a separate, device-only queue: keep retrying.
         setOnline(false);
+        if (!detected) setError("No connection to the queue server. Retrying…");
       }
       if (!cancelled) timer = setTimeout(poll, POLL_MS);
     };
