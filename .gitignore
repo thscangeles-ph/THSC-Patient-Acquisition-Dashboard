@@ -14,3 +14,6 @@
 # logs and system files
 *.log
 .DS_Store
+
+# queue data (QUEUE_STORE=file)
+/.queue-data
