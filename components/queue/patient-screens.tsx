@@ -46,6 +46,7 @@ export function CheckIn() {
   const [main, setMain] = useState("");
   const [extras, setExtras] = useState<string[]>([]);
   const [priority, setPriority] = useState(false);
+  const [newPatient, setNewPatient] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const state = queue.state;
@@ -57,7 +58,7 @@ export function CheckIn() {
 
   const submit = async () => {
     setBusy(true);
-    const result = await queue.dispatch({ type: "selfCheckIn", visit: { name, mobile, priority, stations: [main, ...extras] } });
+    const result = await queue.dispatch({ type: "selfCheckIn", visit: { name, mobile, priority, newPatient, stations: [main, ...extras] } });
     setBusy(false);
     if (!result.ok) { setError(result.error); return; }
     writeStorage(TICKET_KEY, JSON.stringify({ id: result.visitId, day: state.day }));
@@ -97,6 +98,10 @@ export function CheckIn() {
             ))}
           </fieldset>
         )}
+        <label className="flex items-start gap-3 rounded-xl border border-[#e2d7c2] bg-white p-3 text-sm">
+          <input type="checkbox" checked={newPatient} onChange={(event) => setNewPatient(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[#8b6512]" />
+          <span><span className="font-semibold">This is my first visit to THSC</span><span className="block text-[#756b59]">Leave unticked if you have been here before.</span></span>
+        </label>
         <label className="flex items-start gap-3 rounded-xl border border-[#e2d7c2] bg-white p-3 text-sm">
           <input type="checkbox" checked={priority} onChange={(event) => setPriority(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[#8b6512]" />
           <span><span className="font-semibold">I am a senior citizen, PWD or pregnant</span><span className="block text-[#756b59]">Please show your ID at the front desk.</span></span>

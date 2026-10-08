@@ -78,7 +78,7 @@ function Station({ state, dispatch }: { state: QueueState; dispatch: (action: Qu
                     <span className="w-6 text-right text-sm font-bold tabular-nums text-[#8b6512]">{index + 1}</span>
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-lg font-extrabold">{ticketLabel(visit, station.code)}</p>
-                      <p className="truncate text-sm text-[#5e5443]">{visit.name}{visit.priority && <span className="ml-2 rounded-full bg-[#fff0bd] px-2 py-0.5 text-xs font-semibold text-[#5f4307]">Priority</span>}</p>
+                      <p className="truncate text-sm text-[#5e5443]">{visit.name}{visit.newPatient && <span className="ml-2 rounded-full bg-[#e3f0dc] px-2 py-0.5 text-xs font-semibold text-[#36561f]">New patient</span>}{visit.priority && <span className="ml-2 rounded-full bg-[#fff0bd] px-2 py-0.5 text-xs font-semibold text-[#5f4307]">Priority</span>}</p>
                     </div>
                     <span className="text-sm tabular-nums text-[#756b59]">{formatWait(minutesSince(currentStep(visit)?.queuedAt ?? null, now))}</span>
                     <Button size="sm" variant="outline" onClick={() => void run({ type: "call", station: station.code, visitId: visit.id })}>Call</Button>
@@ -114,7 +114,7 @@ function Serving({ state, visit, stationCode, now, run }: { state: QueueState; v
   return (
     <div className="mt-4 border-t border-[#4a3d27] pt-4 first-of-type:border-0 first-of-type:pt-0">
       <p className="font-mono text-6xl font-extrabold tracking-wide text-white">{ticketLabel(visit, stationCode)}</p>
-      <p className="mt-2 text-xl font-semibold">{visit.name}{visit.priority && <span className="ml-3 rounded-full bg-[#f0c864] px-2.5 py-0.5 align-middle text-sm text-[#2f281c]">Priority</span>}</p>
+      <p className="mt-2 text-xl font-semibold">{visit.name}{visit.newPatient && <span className="ml-3 rounded-full bg-[#cfe6b8] px-2.5 py-0.5 align-middle text-sm text-[#2f281c]">New patient</span>}{visit.priority && <span className="ml-3 rounded-full bg-[#f0c864] px-2.5 py-0.5 align-middle text-sm text-[#2f281c]">Priority</span>}</p>
       <p className="mt-1 text-sm text-[#e8dec7]">Called {step.calledAt ? formatTime(step.calledAt) : ""} · {formatWait(minutesSince(step.calledAt, now))} ago{step.calls > 1 ? ` · called ${step.calls}×` : ""}{visit.notes ? ` · ${visit.notes}` : ""}</p>
       <div className="mt-5 flex flex-wrap gap-2">
         <Button onClick={() => void run({ type: "recall", visitId: visit.id })} variant="secondary"><Megaphone size={16} /> Call again</Button>

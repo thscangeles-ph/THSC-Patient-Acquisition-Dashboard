@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BellRing, Check, CheckCircle2, Clock, MessageSquareText, Plus, Printer, RotateCcw, Search, Settings2, ShieldCheck, Star, Ticket, UserCheck, X } from "lucide-react";
+import { BellRing, Check, CheckCircle2, Clock, FileSpreadsheet, MessageSquareText, Plus, Printer, RotateCcw, Search, Settings2, ShieldCheck, Star, Ticket, UserCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { arrivalLabel, currentLabel, currentStep, isRegistered, ticketLabel, waitingToRegister } from "@/lib/queue/reducer";
+import { downloadQueueReport } from "@/lib/queue/report";
 import { printSlip } from "@/lib/queue/slip";
 import { formatTime, formatWait, minutesSince, queueMessage, STATUS_LABEL, STATUS_TONE, stationName, visitStatus } from "@/lib/queue/format";
 import type { ActionResult, PatientKind, QueueAction, QueueState, Visit } from "@/lib/queue/types";
@@ -91,18 +92,31 @@ function Stat({ icon, label, value, detail, accent = false }: { icon: React.Reac
 
 const slip = (label: string, issuedAt: number) => printSlip(label, issuedAt, `${window.location.origin}/theheartspecialists.png`);
 
+function Toggle({ on, onClick, label, hint }: { on: boolean; onClick: () => void; label: string; hint: string }) {
+  return (
+    <button type="button" aria-pressed={on} onClick={onClick} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ${on ? "border-[#2f281c] bg-[#2f281c] text-white" : "border-[#d8c79f] bg-white text-[#4c4436] hover:border-[#d8a321]"}`}>
+      <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${on ? "border-[#f0c864] bg-[#f0c864] text-[#2f281c]" : "border-[#d8c79f]"}`}>{on && <Check size={13} />}</span>
+      <span><span className="block font-semibold">{label}</span><span className={`block text-xs ${on ? "text-[#e8dec7]" : "text-[#756b59]"}`}>{hint}</span></span>
+    </button>
+  );
+}
+
+const NewBadge = () => <span className="ml-2 rounded-full bg-[#e3f0dc] px-2 py-0.5 text-xs font-semibold text-[#36561f]">New</span>;
+
 function ArrivalPanel({ state, now, run, onRegister }: { state: QueueState; now: number | null; run: (action: QueueAction, success?: string) => Promise<ActionResult>; onRegister: (visitId: string) => void }) {
   const [priority, setPriority] = useState(false);
+  const [newPatient, setNewPatient] = useState(false);
   const [latest, setLatest] = useState<string | null>(null);
   const [printEach, setPrintEach] = useState(false);
   const waiting = waitingToRegister(state);
   const latestVisit = latest ? state.visits.find((visit) => visit.id === latest) : undefined;
 
   const generate = async (kind: PatientKind) => {
-    const result = await run({ type: "arrive", kind, priority });
+    const result = await run({ type: "arrive", kind, priority, newPatient });
     if (!result.ok) return;
     setLatest(result.visitId!);
     setPriority(false);
+    setNewPatient(false);
     if (printEach) slip(result.label!, Date.now());
   };
 
@@ -113,8 +127,11 @@ function ArrivalPanel({ state, now, run, onRegister }: { state: QueueState; now:
         <Button onClick={() => void generate("W")} className="h-12 bg-[#8b6512] text-base text-white hover:bg-[#6f4e0a]"><Ticket size={17} /> Walk-in number</Button>
         <Button onClick={() => void generate("S")} variant="outline" className="h-12 text-base"><Ticket size={17} /> Scheduled number</Button>
       </div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
-        <label className="flex items-center gap-2"><input type="checkbox" checked={priority} onChange={(event) => setPriority(event.target.checked)} className="h-4 w-4 accent-[#8b6512]" /><span><b>Priority lane</b> <span className="text-[#756b59]">(senior, PWD, pregnant)</span></span></label>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Toggle on={newPatient} onClick={() => setNewPatient((value) => !value)} label="New patient" hint="First visit to THSC" />
+        <Toggle on={priority} onClick={() => setPriority((value) => !value)} label="Priority lane" hint="Senior, PWD, pregnant" />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-sm">
         <label className="flex items-center gap-2 text-[#5e5443]"><input type="checkbox" checked={printEach} onChange={(event) => setPrintEach(event.target.checked)} className="h-4 w-4 accent-[#8b6512]" />Print a slip for each number</label>
       </div>
       {latestVisit && !latestVisit.cancelled && !isRegistered(latestVisit) && (
@@ -130,7 +147,7 @@ function ArrivalPanel({ state, now, run, onRegister }: { state: QueueState; now:
           <li key={visit.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${visit.regCalledAt ? "border-[#d8a321] bg-[#fff9e9]" : "border-[#e8dfce]"}`}>
             <span className="min-w-[64px] rounded-lg bg-[#2f281c] px-2 py-1.5 text-center font-mono text-lg font-extrabold text-[#f0c864]">{arrivalLabel(visit)}</span>
             <div className="min-w-0 flex-1 text-sm">
-              <p className="font-semibold">{visit.regCalledAt ? `Called${visit.regCalls > 1 ? ` ×${visit.regCalls}` : ""}` : "Waiting"}{visit.priority && <span className="ml-2 rounded-full bg-[#fff0bd] px-2 py-0.5 text-xs text-[#5f4307]">Priority</span>}</p>
+              <p className="font-semibold">{visit.regCalledAt ? `Called${visit.regCalls > 1 ? ` ×${visit.regCalls}` : ""}` : "Waiting"}{visit.newPatient && <NewBadge />}{visit.priority && <span className="ml-2 rounded-full bg-[#fff0bd] px-2 py-0.5 text-xs text-[#5f4307]">Priority</span>}</p>
               <p className="text-[#7d725f]">Arrived {formatTime(visit.createdAt)} · {formatWait(minutesSince(visit.createdAt, now))}</p>
             </div>
             <Button size="icon-sm" variant="outline" title="Call to register" aria-label={`Call ${arrivalLabel(visit)} to register`} onClick={() => run({ type: "callRegistration", visitId: visit.id })}><BellRing size={15} /></Button>
@@ -151,6 +168,7 @@ function RegisterForm({ state, run, shared, initialVisitId }: { state: QueueStat
   const [mobile, setMobile] = useState("");
   const [notes, setNotes] = useState("");
   const [priority, setPriority] = useState(initial?.priority ?? false);
+  const [newPatient, setNewPatient] = useState(initial?.newPatient ?? false);
   const [stations, setStations] = useState<string[]>([]);
   const [issued, setIssued] = useState<{ visitId: string; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -162,16 +180,16 @@ function RegisterForm({ state, run, shared, initialVisitId }: { state: QueueStat
   const chooseArrival = (id: string | null) => {
     setArrivalId(id);
     const visit = id ? waiting.find((item) => item.id === id) : undefined;
-    if (visit) { setKind(visit.kind); setPriority(visit.priority); }
+    if (visit) { setKind(visit.kind); setPriority(visit.priority); setNewPatient(visit.newPatient === true); }
   };
 
   const submit = async () => {
     setBusy(true);
-    const result = await run({ type: "register", visitId: arrival?.id, visit: { kind, name, mobile, notes, priority, stations } });
+    const result = await run({ type: "register", visitId: arrival?.id, visit: { kind, name, mobile, notes, priority, newPatient, stations } });
     setBusy(false);
     if (!result.ok) return;
     setIssued({ visitId: result.visitId!, label: result.label! });
-    setName(""); setMobile(""); setNotes(""); setPriority(false); setStations([]); setArrivalId(null); setKind("W");
+    setName(""); setMobile(""); setNotes(""); setPriority(false); setStations([]); setArrivalId(null); setKind("W"); setNewPatient(false);
   };
 
   return (
@@ -223,10 +241,10 @@ function RegisterForm({ state, run, shared, initialVisitId }: { state: QueueStat
             ))}
           </div>
         </fieldset>
-        <label className="flex items-start gap-3 rounded-xl border border-[#e8dfce] p-3 text-sm">
-          <input type="checkbox" checked={priority} onChange={(event) => setPriority(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[#8b6512]" />
-          <span><span className="font-semibold">Priority lane</span><span className="block text-[#756b59]">Senior citizen, PWD or pregnant — called ahead of the regular line.</span></span>
-        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <Toggle on={newPatient} onClick={() => setNewPatient((value) => !value)} label="New patient" hint="First visit to THSC" />
+          <Toggle on={priority} onClick={() => setPriority((value) => !value)} label="Priority lane" hint="Senior, PWD, pregnant" />
+        </div>
         <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Notes for staff<Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional" className="text-base font-normal" /></label>
         <Button type="submit" disabled={busy || !name.trim() || !stations.length} className="h-11 bg-[#8b6512] text-base text-white hover:bg-[#6f4e0a]"><Ticket size={17} /> Issue queue number</Button>
       </form>
@@ -271,6 +289,7 @@ function PatientList({ state, now, run, shared }: { state: QueueState; now: numb
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative"><Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8b6512]" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or number" aria-label="Search patients" className="h-9 w-48 pl-8" /></div>
+          <Button size="sm" variant="outline" onClick={() => void import("xlsx").then((xlsx) => downloadQueueReport(xlsx, state, Date.now()))} disabled={!state.visits.length}><FileSpreadsheet size={15} /> Excel report</Button>
           <div className="flex rounded-lg bg-[#f2ecdf] p-1 text-sm font-semibold">
             {(["active", "completed", "all"] as Filter[]).map((value) => (
               <button key={value} type="button" onClick={() => setFilter(value)} className={`rounded-md px-3 py-1 ${filter === value ? "bg-white shadow-sm" : "text-[#756b59]"}`}>{value === "active" ? "In clinic" : value === "completed" ? "Completed" : "All"}</button>
@@ -293,6 +312,7 @@ function PatientList({ state, now, run, shared }: { state: QueueState; now: numb
                   <TableCell className="max-w-[240px]">
                     <p className="truncate font-semibold">{visit.name || <span className="font-normal italic text-[#857967]">Not registered yet</span>}</p>
                     <div className="mt-0.5 flex flex-wrap gap-1 text-xs">
+                      {visit.newPatient && <span className="rounded-full bg-[#e3f0dc] px-2 py-0.5 font-semibold text-[#36561f]">New patient</span>}
                       {visit.priority && <span className="rounded-full bg-[#fff0bd] px-2 py-0.5 font-semibold text-[#5f4307]">Priority</span>}
                       {visit.source === "self" && <span className={`rounded-full px-2 py-0.5 font-semibold ${visit.verified ? "bg-[#edf5e8] text-[#41612c]" : "bg-[#fde8eb] text-[#9b1f35]"}`}>{visit.verified ? "QR check-in" : "QR check-in · verify"}</span>}
                       {visit.mobile && <span className="text-[#857967]">{visit.mobile}</span>}

@@ -33,6 +33,8 @@ export type Visit = {
   mobile: string;
   notes: string;
   priority: boolean;
+  /** First visit to the clinic (a newly acquired patient) rather than a returning patient. */
+  newPatient: boolean;
   source: "desk" | "self";
   verified: boolean;
   cancelled: boolean;
@@ -78,19 +80,20 @@ export type VisitInput = {
   mobile?: string;
   notes?: string;
   priority?: boolean;
+  newPatient?: boolean;
   stations: string[];
 };
 
 export type QueueAction =
   /** Generates the next queue number for a patient who has just arrived, before registration. */
-  | { type: "arrive"; kind: PatientKind; priority?: boolean }
+  | { type: "arrive"; kind: PatientKind; priority?: boolean; newPatient?: boolean }
   /** Calls a queue number (the next one if none is given) to the front desk for registration. */
   | { type: "callRegistration"; visitId?: string }
   /** Registers a patient: completes a number generated on arrival (visitId), or creates a new one. */
   | { type: "register"; visit: VisitInput; visitId?: string }
-  | { type: "selfCheckIn"; visit: Omit<VisitInput, "kind" | "priority"> & { priority?: boolean } }
+  | { type: "selfCheckIn"; visit: Omit<VisitInput, "kind"> }
   | { type: "verify"; visitId: string }
-  | { type: "updateVisit"; visitId: string; name?: string; mobile?: string; notes?: string; priority?: boolean }
+  | { type: "updateVisit"; visitId: string; name?: string; mobile?: string; notes?: string; priority?: boolean; newPatient?: boolean }
   | { type: "markMessaged"; visitId: string }
   | { type: "call"; station: string; visitId?: string }
   | { type: "recall"; visitId: string }

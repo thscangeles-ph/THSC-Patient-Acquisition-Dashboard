@@ -75,7 +75,7 @@ function validateStations(state: QueueState, codes: unknown): string[] | string 
   return result;
 }
 
-function newVisit(state: QueueState, kind: PatientKind, priority: boolean, now: number, source: Visit["source"]): Visit | string {
+function newVisit(state: QueueState, kind: PatientKind, priority: boolean, newPatient: boolean, now: number, source: Visit["source"]): Visit | string {
   if (state.visits.length >= 999) return "The daily queue limit of 999 patients has been reached.";
   const visit: Visit = {
     id: newId(),
@@ -85,6 +85,7 @@ function newVisit(state: QueueState, kind: PatientKind, priority: boolean, now: 
     mobile: "",
     notes: "",
     priority,
+    newPatient,
     source,
     verified: source === "desk",
     cancelled: false,
@@ -112,6 +113,7 @@ function registerVisit(state: QueueState, visit: Visit, input: VisitInput, now: 
   visit.mobile = clean(input.mobile, 20);
   visit.notes = clean(input.notes, 200);
   visit.priority = Boolean(input.priority) || visit.priority;
+  if (input.newPatient !== undefined) visit.newPatient = Boolean(input.newPatient);
   visit.registered = true;
   visit.registeredAt = now;
   visit.steps = stations.map((code, index) => makeStep(code, now, index === 0));
@@ -199,7 +201,7 @@ function run(state: QueueState, action: QueueAction, now: number): ActionResult 
 
   switch (action.type) {
     case "arrive": {
-      const visit = newVisit(state, action.kind, Boolean(action.priority), now, "desk");
+      const visit = newVisit(state, action.kind, Boolean(action.priority), Boolean(action.newPatient), now, "desk");
       if (typeof visit === "string") return fail(visit);
       return { ok: true, visitId: visit.id, label: arrivalLabel(visit) };
     }
@@ -219,7 +221,7 @@ function run(state: QueueState, action: QueueAction, now: number): ActionResult 
         visit = findVisit(action.visitId);
         if (!visit || isRegistered(visit)) return fail("That queue number is no longer waiting to register.");
       } else {
-        visit = newVisit(state, action.visit.kind, Boolean(action.visit.priority), now, "desk");
+        visit = newVisit(state, action.visit.kind, Boolean(action.visit.priority), Boolean(action.visit.newPatient), now, "desk");
         if (typeof visit === "string") return fail(visit);
       }
       const problem = registerVisit(state, visit, action.visit, now);
@@ -230,7 +232,7 @@ function run(state: QueueState, action: QueueAction, now: number): ActionResult 
       const codes = Array.isArray(action.visit.stations) ? action.visit.stations : [];
       const first = findStation(state, String(codes[0]));
       if (!first?.selfCheckIn) return fail("Choose the doctor or service you are scheduled for.");
-      const visit = newVisit(state, "S", Boolean(action.visit.priority), now, "self");
+      const visit = newVisit(state, "S", Boolean(action.visit.priority), Boolean(action.visit.newPatient), now, "self");
       if (typeof visit === "string") return fail(visit);
       const problem = registerVisit(state, visit, { ...action.visit, kind: "S" }, now);
       if (problem) return fail(problem);
@@ -253,6 +255,7 @@ function run(state: QueueState, action: QueueAction, now: number): ActionResult 
       if (action.mobile !== undefined) visit.mobile = clean(action.mobile, 20);
       if (action.notes !== undefined) visit.notes = clean(action.notes, 200);
       if (action.priority !== undefined) visit.priority = Boolean(action.priority);
+      if (action.newPatient !== undefined) visit.newPatient = Boolean(action.newPatient);
       return { ok: true };
     }
     case "markMessaged": {

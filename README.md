@@ -58,6 +58,7 @@ The queue follows the clinic's arrival flow:
 - **One number per visit.** A patient keeps the same daily number for consultation, procedures and laboratory; only the station code changes (`01-C1-W` → `01-L1-W`).
 - Station codes, names and rooms are set in Front desk → **Settings**. Defaults: C1–C3 Consultation, P1 Procedures (ECG / 2D Echo), L1 Laboratory.
 - Patients marked **Priority lane** (senior citizen, PWD, pregnant) are called ahead of the regular line.
+- **New patient** marks a first-time patient (a newly acquired patient) on arrival, at registration or on the QR check-in page. New patients show a *New* badge on the front desk and station screens and are counted separately in the Excel report.
 
 ### Screens
 
@@ -73,6 +74,8 @@ The queue follows the clinic's arrival flow:
 **Scheduled patients** get their queue number by scanning the QR poster at the entrance (advance registration). Their check-in shows as *QR check-in · verify* on the front desk until a concierge confirms it. The concierge can also register a scheduled patient manually by choosing *Scheduled (S)*.
 
 **One-time message:** *Copy message* on the front desk copies an SMS/Viber text with the patient's queue number (and a live-status link in shared mode) and marks the patient as messaged, so the message is sent only once.
+
+**Excel report:** *Excel report* on the front desk downloads `THSC-Queue-Report-YYYY-MM-DD.xlsx` with four sheets: **Summary** (numbers issued, registered, completed, left before registration; walk-in vs scheduled; new vs returning; priority lane; average and longest waits; busiest hour), **By station** (patients queued and served, average wait and service time), **By hour** (arrivals per hour) and **Patient list** (every queue number with its times). The queue resets at midnight, so download the report at the end of each clinic day.
 
 **Privacy:** patient names and mobile numbers appear only on staff screens. The TV and patient phones receive queue numbers only. In shared mode, staff screens require the staff PIN.
 
