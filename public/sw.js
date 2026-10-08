@@ -1,18 +1,12 @@
-// THSC Queue service worker: makes the app installable and shows a friendly page when offline.
-// Queue data (/api/queue) is never cached, so every screen always shows the live queue.
-const CACHE = "thsc-shell-v2";
-const OFFLINE_URL = "/offline.html";
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll([OFFLINE_URL, "/icons/icon-192.png"])));
-  self.skipWaiting();
-});
+// The THSC Queue Board moved to the QUEUEING-SYSTEM app. Devices that installed it from this
+// site still run the old service worker; this replacement clears its cache and unregisters it.
+self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
-});
-
-self.addEventListener("fetch", (event) => {
-  if (event.request.mode !== "navigate") return;
-  event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE_URL)));
+  event.waitUntil((async () => {
+    await Promise.all((await caches.keys()).map((key) => caches.delete(key)));
+    await self.registration.unregister();
+    const clients = await self.clients.matchAll({ type: "window" });
+    clients.forEach((client) => client.navigate(client.url));
+  })());
 });
