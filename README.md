@@ -4,6 +4,15 @@ A browser-based dashboard for The Heart Specialists Clinic. Upload the standard 
 
 Patient data is processed locally in the browser. The project has no database, server-side upload handler, or required environment variables.
 
+## Install on a tablet or phone
+
+The dashboard can be installed as an app. It opens full screen from the home screen and still works without a connection, because workbooks are analyzed on the device.
+
+- **Android (Chrome) and computers (Chrome or Edge):** open the dashboard and tap **Install app** in the header, or use the browser menu → **Install app** / **Add to Home screen**.
+- **iPhone and iPad:** open the dashboard in Safari, tap **Share**, then **Add to Home Screen**. The **Install app** button shows these steps.
+
+The service worker (`public/sw.js`) saves only the app's own files. Workbooks and patient data are never cached or sent anywhere. Installing works only over HTTPS, so use the Vercel address, not `http://`.
+
 ## Run locally
 
 Requirements: Node.js 20.9 or newer and pnpm.
