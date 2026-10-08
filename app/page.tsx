@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import * as XLSX from "xlsx";
-import { AlertCircle, BarChart3, CheckCircle2, FileSpreadsheet, HeartPulse, PhilippinePeso, RefreshCw, ShieldCheck, Upload, Users } from "lucide-react";
+import { AlertCircle, BarChart3, ListOrdered, CheckCircle2, FileSpreadsheet, HeartPulse, PhilippinePeso, RefreshCw, ShieldCheck, Upload, Users } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -195,7 +196,10 @@ export default function Home() {
             <img src="/theheartspecialists.png" alt="The Heart Specialists Clinic logo" width="62" height="48" className="h-12 w-[62px] shrink-0 object-contain" />
             <div className="min-w-0"><p className="truncate text-sm font-semibold tracking-[0.08em] text-[#f0c864]">THE HEART SPECIALISTS CLINIC</p><h1 className="truncate text-lg font-bold tracking-tight text-white sm:text-xl">Patient Acquisition Dashboard</h1></div>
           </div>
-          {hasData && <Button variant="outline" onClick={reset} className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white"><RefreshCw size={16} /> Start over</Button>}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button asChild variant="outline" className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white"><Link href="/queue"><ListOrdered size={16} /> Queue board</Link></Button>
+            {hasData && <Button variant="outline" onClick={reset} className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white"><RefreshCw size={16} /> Start over</Button>}
+          </div>
         </div>
       </header>
 

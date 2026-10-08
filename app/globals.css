@@ -35,3 +35,10 @@ html { background: var(--background); }
 body { background: var(--background); color: var(--foreground); font-family: "Aptos", "Segoe UI", Arial, sans-serif; }
 button, input, [role="combobox"] { min-height: 42px; }
 ::selection { background: #f0c864; color: #2f281c; }
+
+/* Queue board TV display */
+@keyframes queue-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+@keyframes queue-call { 0%, 100% { box-shadow: 0 0 0 0 rgba(240, 200, 100, 0.55); } 50% { box-shadow: 0 0 0 1.4vw rgba(240, 200, 100, 0); } }
+@utility animate-marquee { animation: queue-marquee 28s linear infinite; }
+@utility animate-call { animation: queue-call 1.6s ease-out 6; }
+@media (prefers-reduced-motion: reduce) { .animate-marquee, .animate-call { animation: none; } }
