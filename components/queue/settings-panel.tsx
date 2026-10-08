@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Save, Trash2, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { parseYouTube } from "@/lib/queue/youtube";
 import type { ActionResult, QueueAction, QueueState, ServiceType, Settings, Station } from "@/lib/queue/types";
 import { Panel } from "./staff-shell";
 
@@ -61,6 +62,24 @@ export function SettingsPanel({ state, dispatch, onClose }: { state: QueueState;
 
       <div className="mt-6 grid gap-4 md:grid-cols-1">
         <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">TV display message<Input value={draft.ticker} maxLength={240} onChange={(event) => setDraft((current) => ({ ...current, ticker: event.target.value }))} className="text-base font-normal" /></label>
+        <div className="grid gap-2 rounded-xl border border-[#e8dfce] p-4">
+          <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">
+            <span className="flex items-center gap-2"><MonitorPlay size={16} className="text-[#b4233c]" /> YouTube on the TV while patients wait</span>
+            <span className="-mt-1 text-xs font-normal text-[#857967]">Paste the clinic&apos;s YouTube channel ID (starts with UC), a playlist link or a video link. Leave empty to show the queue only.</span>
+            <Input value={draft.youtube ?? ""} maxLength={300} placeholder="e.g. https://www.youtube.com/playlist?list=PL…" onChange={(event) => setDraft((current) => ({ ...current, youtube: event.target.value }))} className="text-base font-normal" />
+          </label>
+          {(() => {
+            const video = parseYouTube(draft.youtube);
+            if (!video) return null;
+            return "error" in video
+              ? <p className="text-sm font-semibold text-[#b4233c]">{video.error}</p>
+              : <p className="text-sm font-semibold text-[#41612c]">✓ {video.kind === "channel" ? "Channel uploads" : video.kind === "playlist" ? "Playlist" : "Video"} will play on the TV, muted and on repeat.</p>;
+          })()}
+          <label className="flex items-start gap-2 text-sm text-[#514838]">
+            <input type="checkbox" checked={Boolean(draft.videoSound)} onChange={(event) => setDraft((current) => ({ ...current, videoSound: event.target.checked }))} className="mt-0.5 h-4 w-4 accent-[#8b6512]" />
+            <span>Play the video&apos;s sound <span className="text-[#857967]">— muted automatically while queue numbers are announced</span></span>
+          </label>
+        </div>
       </div>
 
       {message && <p className={`mt-4 text-sm font-semibold ${message.ok ? "text-[#41612c]" : "text-[#b4233c]"}`}>{message.text}</p>}

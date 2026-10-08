@@ -64,6 +64,10 @@ export type Announcement = {
 export type Settings = {
   stations: Station[];
   ticker: string;
+  /** YouTube video, playlist or channel shown on the lobby TV while patients wait (empty for none). */
+  youtube?: string;
+  /** Play the video's sound on the TV; it is muted automatically while numbers are announced. */
+  videoSound?: boolean;
 };
 
 export type QueueState = {

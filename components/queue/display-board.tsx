@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Expand, Volume2, VolumeX } from "lucide-react";
 import { arrivalLabel, servingAt, ticketLabel, TIME_ZONE, waitingFor, waitingToRegister } from "@/lib/queue/reducer";
 import { spokenLabel } from "@/lib/queue/format";
-import type { Announcement, QueueState } from "@/lib/queue/types";
+import { parseYouTube, youtubeCommand } from "@/lib/queue/youtube";
+import type { Announcement, QueueState, Station } from "@/lib/queue/types";
 import { SyncBadge } from "./staff-shell";
 import { useNow, useQueue } from "./use-queue";
 
@@ -38,7 +39,15 @@ export function DisplayBoard() {
   const [sound, setSound] = useState(false);
   const audioRef = useRef<AudioContext | null>(null);
   const seenRef = useRef<string | null | undefined>(undefined);
+  const videoRef = useRef<HTMLIFrameElement | null>(null);
+  const unmuteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const state = queue.state;
+  const videoSound = Boolean(state?.settings.videoSound);
+
+  // The video plays muted unless "Play the video's sound" is on and announcements are enabled.
+  useEffect(() => {
+    youtubeCommand(videoRef.current, sound && videoSound ? "unMute" : "mute");
+  }, [sound, videoSound]);
 
   // Announce calls made after this screen loaded, in order.
   useEffect(() => {
@@ -50,6 +59,12 @@ export function DisplayBoard() {
     seenRef.current = list[list.length - 1]?.id ?? null;
     if (!fresh.length || !sound) return;
     const context = audioRef.current;
+    // Duck the video while numbers are read out, then bring its sound back.
+    if (videoSound) {
+      youtubeCommand(videoRef.current, "mute");
+      clearTimeout(unmuteTimer.current);
+      unmuteTimer.current = setTimeout(() => youtubeCommand(videoRef.current, "unMute"), fresh.length * 6000 + 2000);
+    }
     fresh.forEach((item, index) => {
       setTimeout(() => {
         if (context) chime(context);
@@ -61,7 +76,7 @@ export function DisplayBoard() {
         }
       }, index * 6000);
     });
-  }, [state, sound]);
+  }, [state, sound, videoSound]);
 
   const enableSound = () => {
     const Context = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -69,6 +84,7 @@ export function DisplayBoard() {
     void audioRef.current?.resume();
     if ("speechSynthesis" in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(" "));
     setSound(true);
+    if (videoSound) { youtubeCommand(videoRef.current, "unMute"); youtubeCommand(videoRef.current, "setVolume", [60]); }
   };
 
   return (
@@ -84,7 +100,7 @@ export function DisplayBoard() {
           <p className="mt-1 text-[1vw] text-[#e8dec7]">{now ? date.format(now) : ""}</p>
         </div>
       </header>
-      {state ? <Board state={state} now={now} /> : <div className="grid flex-1 place-items-center text-[2vw] text-[#cbbd9d]">{queue.error || "Connecting to the queue…"}</div>}
+      {state ? <Board state={state} now={now} videoRef={videoRef} onVideoReady={() => youtubeCommand(videoRef.current, sound && videoSound ? "unMute" : "mute")} /> : <div className="grid flex-1 place-items-center text-[2vw] text-[#cbbd9d]">{queue.error || "Connecting to the queue…"}</div>}
       <footer className="flex items-center gap-4 overflow-hidden border-t border-[#4a3d27] bg-[#2f281c] py-[1.2vh]">
         <div className="relative flex-1 overflow-hidden whitespace-nowrap text-[1.35vw] text-[#f4e8c7]"><span className="animate-marquee inline-block pl-[100%]">{state?.settings.ticker}</span></div>
         <div className="flex shrink-0 items-center gap-2 pr-[1.5vw] opacity-70 transition hover:opacity-100">
@@ -102,68 +118,116 @@ export function DisplayBoard() {
   );
 }
 
-function Board({ state, now }: { state: QueueState; now: number | null }) {
-  const stations = state.settings.stations.filter((station) => station.active);
-  const latest = state.announcements[state.announcements.length - 1];
-  const fresh = Boolean(latest && now && now - latest.at < HIGHLIGHT_MS);
+type Latest = Announcement | undefined;
+
+function NowCalling({ latest, fresh, compact = false }: { latest: Latest; fresh: boolean; compact?: boolean }) {
+  return (
+    <section className={`flex flex-col items-center justify-center rounded-[1.5vw] border-[0.25vw] text-center transition-colors duration-700 ${compact ? "py-[2vh]" : "flex-[1.15]"} ${fresh ? "animate-call border-[#f0c864] bg-[#4a3612]" : "border-[#4a3d27] bg-[#2a2318]"}`}>
+      <p className={`${compact ? "text-[1.2vw]" : "text-[1.6vw]"} font-semibold uppercase tracking-[0.2em] text-[#f0c864]`}>{latest ? "Now calling" : "Welcome"}</p>
+      {latest ? (
+        <>
+          <p className={`mt-[1vh] font-mono ${compact ? "text-[4.6vw]" : "text-[8.5vw]"} font-extrabold leading-none tracking-wide`}>{latest.label}</p>
+          <p className={`mt-[1.5vh] px-[1vw] ${compact ? "text-[1.4vw]" : "text-[2.2vw]"} font-semibold text-[#f4e8c7]`}>Please proceed to <span className="text-white">{latest.destination}</span></p>
+        </>
+      ) : <p className={`mt-[1.5vh] max-w-[80%] ${compact ? "text-[1.4vw]" : "text-[2.2vw]"} text-[#f4e8c7]`}>Please wait for your queue number to appear on this screen.</p>}
+    </section>
+  );
+}
+
+function StationTiles({ state, stations, columns, compact = false }: { state: QueueState; stations: Station[]; columns: number; compact?: boolean }) {
+  return (
+    <section className={`grid min-h-0 auto-rows-fr gap-[1vw] ${compact ? "flex-none" : "flex-1"}`} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+      {stations.map((station) => {
+        const serving = servingAt(state, station.code)[0];
+        return (
+          <div key={station.code} className={`flex min-h-0 flex-col justify-center rounded-[1vw] border border-[#4a3d27] bg-[#2a2318] ${compact ? "px-[1vw] py-[1.2vh]" : "px-[1.4vw] py-[1vh]"}`}>
+            <p className={`truncate ${compact ? "text-[0.95vw]" : "text-[1.15vw]"} font-semibold text-[#cbbd9d]`}><span className="font-mono text-[#f0c864]">{station.code}</span> · {station.name}</p>
+            <p className={`mt-[0.5vh] font-mono ${compact ? "text-[2.1vw]" : "text-[3vw]"} font-extrabold leading-tight ${serving ? "text-white" : "text-[#5c4b2d]"}`}>{serving ? ticketLabel(serving, station.code) : "—"}</p>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function NextInLine({ state, stations }: { state: QueueState; stations: Station[] }) {
   const toRegister = waitingToRegister(state);
   // The number most recently called to the front desk, while that patient is still registering.
   const registering = [...toRegister].filter((visit) => visit.regCalledAt).sort((a, b) => b.regCalledAt! - a.regCalledAt!)[0];
   const nextToRegister = toRegister.filter((visit) => visit !== registering);
+  return (
+    <section className="flex min-h-0 flex-1 flex-col rounded-[1.5vw] border border-[#4a3d27] bg-[#2a2318] p-[1.4vw]">
+      <h2 className="text-[1.6vw] font-bold uppercase tracking-[0.14em] text-[#f0c864]">Next in line</h2>
+      {(registering || nextToRegister.length > 0) && (
+        <div className="mt-[1.2vh] rounded-[0.8vw] bg-[#4a3612] px-[1.2vw] py-[1vh]">
+          <p className="flex items-baseline justify-between text-[1.1vw] text-[#f4e8c7]"><span>Registration · Front Desk</span><span className="tabular-nums">{toRegister.length} waiting</span></p>
+          <div className="mt-[0.6vh] flex flex-wrap items-center gap-[0.6vw]">
+            {registering && <span className="rounded-[0.5vw] bg-[#f0c864] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-extrabold text-[#2f281c]">{arrivalLabel(registering)}</span>}
+            {nextToRegister.slice(0, 5).map((visit) => <span key={visit.id} className="rounded-[0.5vw] bg-[#3a3022] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-bold">{arrivalLabel(visit)}</span>)}
+            {nextToRegister.length > 5 && <span className="text-[1.2vw] text-[#cbbd9d]">+{nextToRegister.length - 5} more</span>}
+          </div>
+        </div>
+      )}
+      <div className="mt-[1.2vh] grid min-h-0 flex-1 content-start gap-[1.2vh] overflow-hidden">
+        {stations.map((station) => {
+          const waiting = waitingFor(state, station.code);
+          return (
+            <div key={station.code} className="border-b border-[#3a3022] pb-[1vh] last:border-0">
+              <p className="flex justify-between text-[1.1vw] text-[#cbbd9d]"><span className="truncate">{station.name}</span><span className="tabular-nums">{waiting.length} waiting</span></p>
+              <div className="mt-[0.6vh] flex flex-wrap gap-[0.6vw]">
+                {waiting.length === 0 && <span className="text-[1.5vw] text-[#5c4b2d]">—</span>}
+                {waiting.slice(0, 4).map((visit) => <span key={visit.id} className="rounded-[0.5vw] bg-[#3a3022] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-bold">{ticketLabel(visit, station.code)}</span>)}
+                {waiting.length > 4 && <span className="self-center text-[1.2vw] text-[#cbbd9d]">+{waiting.length - 4} more</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function Board({ state, now, videoRef, onVideoReady }: { state: QueueState; now: number | null; videoRef: React.RefObject<HTMLIFrameElement | null>; onVideoReady: () => void }) {
+  const stations = state.settings.stations.filter((station) => station.active);
+  const latest = state.announcements[state.announcements.length - 1];
+  const fresh = Boolean(latest && now && now - latest.at < HIGHLIGHT_MS);
+  const video = parseYouTube(state.settings.youtube);
+
+  if (video && !("error" in video)) {
+    return (
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-[1.2vw] p-[1.2vw]">
+        <div className="flex min-h-0 flex-col gap-[1.2vw]">
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-[1.2vw] border border-[#4a3d27] bg-black">
+            <iframe ref={videoRef} key={video.src} src={video.src} title="The Heart Specialists Clinic videos" allow="autoplay; encrypted-media; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin"
+              onLoad={() => setTimeout(onVideoReady, 1500)} className="absolute inset-0 h-full w-full border-0" />
+            {fresh && latest && (
+              // A new call covers the video so patients who are watching it don't miss their number.
+              <div className="absolute inset-0 grid place-items-center bg-[#1f1a12]/85 text-center">
+                <div className="animate-call rounded-[1.5vw] border-[0.25vw] border-[#f0c864] bg-[#4a3612] px-[4vw] py-[4vh]">
+                  <p className="text-[1.6vw] font-semibold uppercase tracking-[0.2em] text-[#f0c864]">Now calling</p>
+                  <p className="mt-[1vh] font-mono text-[7.5vw] font-extrabold leading-none tracking-wide">{latest.label}</p>
+                  <p className="mt-[2vh] text-[2vw] font-semibold text-[#f4e8c7]">Please proceed to <span className="text-white">{latest.destination}</span></p>
+                </div>
+              </div>
+            )}
+          </div>
+          <StationTiles state={state} stations={stations} columns={Math.min(Math.max(stations.length, 1), 5)} compact />
+        </div>
+        <div className="flex min-h-0 flex-col gap-[1.2vw]">
+          <NowCalling latest={latest} fresh={fresh} compact />
+          <NextInLine state={state} stations={stations} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] gap-[1.5vw] p-[1.5vw]">
       <div className="flex min-h-0 flex-col gap-[1.5vw]">
-        <section className={`flex flex-[1.15] flex-col items-center justify-center rounded-[1.5vw] border-[0.25vw] text-center transition-colors duration-700 ${fresh ? "animate-call border-[#f0c864] bg-[#4a3612]" : "border-[#4a3d27] bg-[#2a2318]"}`}>
-          <p className="text-[1.6vw] font-semibold uppercase tracking-[0.2em] text-[#f0c864]">{latest ? "Now calling" : "Welcome"}</p>
-          {latest ? (
-            <>
-              <p className="mt-[1vh] font-mono text-[8.5vw] font-extrabold leading-none tracking-wide">{latest.label}</p>
-              <p className="mt-[2vh] text-[2.2vw] font-semibold text-[#f4e8c7]">Please proceed to <span className="text-white">{latest.destination}</span></p>
-            </>
-          ) : <p className="mt-[2vh] max-w-[80%] text-[2.2vw] text-[#f4e8c7]">Please wait for your queue number to appear on this screen.</p>}
-        </section>
-        <section className="grid min-h-0 flex-1 auto-rows-fr gap-[1vw]" style={{ gridTemplateColumns: `repeat(${Math.min(Math.max(stations.length, 1), 3)}, minmax(0, 1fr))` }}>
-          {stations.map((station) => {
-            const serving = servingAt(state, station.code)[0];
-            return (
-              <div key={station.code} className="flex min-h-0 flex-col justify-center rounded-[1vw] border border-[#4a3d27] bg-[#2a2318] px-[1.4vw] py-[1vh]">
-                <p className="truncate text-[1.15vw] font-semibold text-[#cbbd9d]"><span className="font-mono text-[#f0c864]">{station.code}</span> · {station.name}</p>
-                <p className={`mt-[0.5vh] font-mono text-[3vw] font-extrabold leading-tight ${serving ? "text-white" : "text-[#5c4b2d]"}`}>{serving ? ticketLabel(serving, station.code) : "—"}</p>
-              </div>
-            );
-          })}
-        </section>
+        <NowCalling latest={latest} fresh={fresh} />
+        <StationTiles state={state} stations={stations} columns={Math.min(Math.max(stations.length, 1), 3)} />
       </div>
-
-      <section className="flex min-h-0 flex-col rounded-[1.5vw] border border-[#4a3d27] bg-[#2a2318] p-[1.4vw]">
-        <h2 className="text-[1.6vw] font-bold uppercase tracking-[0.14em] text-[#f0c864]">Next in line</h2>
-        {(registering || nextToRegister.length > 0) && (
-          <div className="mt-[1.2vh] rounded-[0.8vw] bg-[#4a3612] px-[1.2vw] py-[1vh]">
-            <p className="flex items-baseline justify-between text-[1.1vw] text-[#f4e8c7]"><span>Registration · Front Desk</span><span className="tabular-nums">{toRegister.length} waiting</span></p>
-            <div className="mt-[0.6vh] flex flex-wrap items-center gap-[0.6vw]">
-              {registering && <span className="rounded-[0.5vw] bg-[#f0c864] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-extrabold text-[#2f281c]">{arrivalLabel(registering)}</span>}
-              {nextToRegister.slice(0, 5).map((visit) => <span key={visit.id} className="rounded-[0.5vw] bg-[#3a3022] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-bold">{arrivalLabel(visit)}</span>)}
-              {nextToRegister.length > 5 && <span className="text-[1.2vw] text-[#cbbd9d]">+{nextToRegister.length - 5} more</span>}
-            </div>
-          </div>
-        )}
-        <div className="mt-[1.2vh] grid min-h-0 flex-1 content-start gap-[1.2vh] overflow-hidden">
-          {stations.map((station) => {
-            const waiting = waitingFor(state, station.code);
-            return (
-              <div key={station.code} className="border-b border-[#3a3022] pb-[1vh] last:border-0">
-                <p className="flex justify-between text-[1.1vw] text-[#cbbd9d]"><span className="truncate">{station.name}</span><span className="tabular-nums">{waiting.length} waiting</span></p>
-                <div className="mt-[0.6vh] flex flex-wrap gap-[0.6vw]">
-                  {waiting.length === 0 && <span className="text-[1.5vw] text-[#5c4b2d]">—</span>}
-                  {waiting.slice(0, 4).map((visit) => <span key={visit.id} className="rounded-[0.5vw] bg-[#3a3022] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-bold">{ticketLabel(visit, station.code)}</span>)}
-                  {waiting.length > 4 && <span className="self-center text-[1.2vw] text-[#cbbd9d]">+{waiting.length - 4} more</span>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      <NextInLine state={state} stations={stations} />
     </div>
   );
 }

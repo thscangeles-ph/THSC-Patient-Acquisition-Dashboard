@@ -1,3 +1,4 @@
+import { parseYouTube } from "./youtube";
 import type { ActionResult, Announcement, PatientKind, QueueAction, QueueState, Settings, Station, Step, Visit, VisitInput } from "./types";
 
 export const TIME_ZONE = "Asia/Manila";
@@ -182,7 +183,10 @@ function sanitizeSettings(input: Settings): Settings | string {
     });
   }
   if (!stations.length) return "Add at least one station.";
-  return { stations, ticker: clean(input.ticker, 240) };
+  const youtube = clean(input.youtube, 300);
+  const video = parseYouTube(youtube);
+  if (video && "error" in video) return `YouTube: ${video.error}`;
+  return { stations, ticker: clean(input.ticker, 240), youtube, videoSound: Boolean(input.videoSound) };
 }
 
 /**
