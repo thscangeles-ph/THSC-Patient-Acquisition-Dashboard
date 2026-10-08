@@ -1,6 +1,6 @@
 // THSC Queue service worker: makes the app installable and shows a friendly page when offline.
 // Queue data (/api/queue) is never cached, so every screen always shows the live queue.
-const CACHE = "thsc-shell-v1";
+const CACHE = "thsc-shell-v2";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {
