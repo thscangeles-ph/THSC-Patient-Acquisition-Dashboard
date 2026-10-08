@@ -67,7 +67,9 @@ const patientTypeGroup = (value: string): PatientGroup | null => GROUP_BY_KEY[no
 const filterLabel = (filter: PatientTypeFilter) => filter === "all" ? "All patient types" : PATIENT_TYPES.find((type) => type.id === filter)!.label;
 const matchesFilter = (group: PatientGroup, filter: PatientTypeFilter) => filter === "all" || (PATIENT_TYPES.find((type) => type.id === filter)!.groups as readonly PatientGroup[]).includes(group);
 
-const sourceLabel = (value: string) => clean(value) || "Not specified";
+// Only NEW and HMO/NEW patients are asked where they learned about the clinic. Blank, N/A, and NONE are not answers.
+const isNewGroup = (group: PatientGroup) => group === "NEW" || group === "HMO/NEW";
+const hasSource = (source: string) => !/^(N\/?A|NONE|-*)$/.test(normalize(source));
 const shortSource = (value: string) => value.length > 22 ? `${value.slice(0, 21)}…` : value;
 
 export default function Home() {
@@ -108,7 +110,7 @@ export default function Home() {
           const group = patientTypeGroup(clean(row[indexes["Patient Type"]]));
           if (!group) { skipped += 1; return; }
           const transaction = clean(row[indexes["Transaction No."]]);
-          const source = sourceLabel(clean(row[indexes.Source]));
+          const source = clean(row[indexes.Source]);
           const revenue = Number(row[indexes["Total Payment"]]) || 0;
           const dateValue = row[indexes.Date];
           const service = serviceIndex >= 0 ? clean(row[serviceIndex]) : String(offset);
@@ -154,29 +156,42 @@ export default function Home() {
   }, [rows]);
 
   const metrics = useMemo(() => {
-    const patients = new Map<string, { source: string; group: PatientGroup }>();
+    const patients = new Set<string>();
     const transactions = new Set<string>();
     let revenue = 0;
     filteredRows.forEach((row) => {
-      if (!patients.has(row.patient)) patients.set(row.patient, { source: row.source, group: row.group });
+      patients.add(row.patient);
       if (row.transaction) transactions.add(row.transaction);
       revenue += row.revenue;
     });
     const validDates = filteredRows.map((row) => row.date).filter((date): date is Date => date instanceof Date);
     const minDate = validDates.length ? new Date(Math.min(...validDates.map((date) => date.getTime()))) : null;
     const maxDate = validDates.length ? new Date(Math.max(...validDates.map((date) => date.getTime()))) : null;
-    const sources = new Map<string, { patients: Set<string>; revenue: number }>();
-    patients.forEach((patient, patientName) => {
-      if (!sources.has(patient.source)) sources.set(patient.source, { patients: new Set(), revenue: 0 });
-      sources.get(patient.source)!.patients.add(patientName);
-    });
-    filteredRows.forEach((row) => {
-      if (!sources.has(row.source)) sources.set(row.source, { patients: new Set(), revenue: 0 });
-      sources.get(row.source)!.revenue += row.revenue;
-    });
-    const sourceRows = Array.from(sources.entries()).map(([source, data]) => ({ source, patients: data.patients.size, revenue: data.revenue })).sort((a, b) => b.patients - a.patients || b.revenue - a.revenue);
-    return { patients: patients.size, transactions: transactions.size, revenue, minDate, maxDate, sources: sourceRows };
+    return { patients: patients.size, transactions: transactions.size, revenue, minDate, maxDate };
   }, [filteredRows]);
+
+  // Sources always cover new patients, whatever the patient type filter. Each patient is credited, with all of their revenue, to the first source they gave.
+  const acquisition = useMemo(() => {
+    const patients = new Map<string, { source: string; revenue: number }>();
+    rows.forEach((row) => {
+      if (!isNewGroup(row.group)) return;
+      const patient = patients.get(row.patient) ?? { source: "", revenue: 0 };
+      if (!patient.source && hasSource(row.source)) patient.source = row.source;
+      patient.revenue += row.revenue;
+      patients.set(row.patient, patient);
+    });
+    const sources = new Map<string, { patients: number; revenue: number }>();
+    let noSource = 0;
+    patients.forEach((patient) => {
+      if (!patient.source) { noSource += 1; return; }
+      const item = sources.get(patient.source) ?? { patients: 0, revenue: 0 };
+      item.patients += 1; item.revenue += patient.revenue;
+      sources.set(patient.source, item);
+    });
+    const sourceRows = Array.from(sources, ([source, data]) => ({ source, ...data })).sort((a, b) => b.patients - a.patients || b.revenue - a.revenue);
+    return { newPatients: patients.size, noSource, sources: sourceRows };
+  }, [rows]);
+  const sourceNote = `Only NEW and HMO/NEW patients are asked where they learned about us, so this covers new patients whatever the patient type filter.${acquisition.noSource ? ` ${number.format(acquisition.noSource)} new patient${acquisition.noSource === 1 ? "" : "s"} with no source (N/A) ${acquisition.noSource === 1 ? "is" : "are"} not included.` : ""}`;
 
   const selectedType = PATIENT_TYPES.find((type) => type.id === filter);
   const selectedSummary = patientTypes.types.find((type) => type.id === filter);
@@ -185,7 +200,7 @@ export default function Home() {
     : "Across all patient types";
 
   const allocatedSpend = Object.values(sourceSpend).reduce((sum, value) => sum + (Number(value) || 0), 0);
-  const acquisitionCost = metrics.patients ? marketingSpend / metrics.patients : 0;
+  const acquisitionCost = acquisition.newPatients ? marketingSpend / acquisition.newPatients : 0;
   const period = metrics.minDate && metrics.maxDate
     ? `${metrics.minDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })} – ${metrics.maxDate.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}`
     : "Waiting for a workbook";
@@ -272,7 +287,7 @@ export default function Home() {
           <MetricCard icon={<Users size={20} />} label={`Unique patients · ${filterLabel(filter)}`} value={hasData ? number.format(metrics.patients) : "—"} detail={hasData ? patientDetail : "Upload a workbook to begin"} />
           <MetricCard icon={<BarChart3 size={20} />} label="Transactions" value={hasData ? number.format(metrics.transactions) : "—"} detail="Unique transaction numbers" />
           <MetricCard icon={<PhilippinePeso size={20} />} label="Patient revenue" value={hasData ? money.format(metrics.revenue) : "—"} detail="Sum of Total Payment" />
-          <MetricCard accent icon={<HeartPulse size={20} />} label="Acquisition cost / patient" value={hasData && marketingSpend > 0 ? money.format(acquisitionCost) : "—"} detail={marketingSpend > 0 ? `${money.format(marketingSpend)} ÷ ${number.format(metrics.patients)} patients` : "Enter total marketing spend"} />
+          <MetricCard accent icon={<HeartPulse size={20} />} label="Acquisition cost / new patient" value={hasData && marketingSpend > 0 ? money.format(acquisitionCost) : "—"} detail={marketingSpend > 0 ? `${money.format(marketingSpend)} ÷ ${number.format(acquisition.newPatients)} new patients` : "Enter total marketing spend"} />
         </section>
 
         <section className="mt-5 overflow-hidden rounded-2xl border border-[#e2d7c2] bg-[#fffefb] shadow-sm">
@@ -305,18 +320,18 @@ export default function Home() {
 
         <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.86fr)_minmax(620px,1.4fr)]">
           <div className="rounded-2xl border border-[#e2d7c2] bg-[#fffefb] p-5 shadow-sm sm:p-6">
-            <div><h2 className="text-lg font-bold">Patients by acquisition source</h2><p className="mt-1 text-sm text-[#756b59]">Unique patients assigned to their first recorded source.</p></div>
-            {metrics.sources.length ? <div className="mt-5 h-[330px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={metrics.sources.slice(0, 8)} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }}><CartesianGrid stroke="#eee6d8" horizontal={false} /><XAxis type="number" allowDecimals={false} tick={{ fill: "#766b58", fontSize: 12 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="source" width={130} tickFormatter={shortSource} tick={{ fill: "#4d4435", fontSize: 12 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => [`${number.format(Number(value))} patients`, "Unique patients"]} contentStyle={{ borderRadius: 12, borderColor: "#e2d7c2", boxShadow: "0 10px 30px rgba(61,45,17,.10)" }} /><Bar dataKey="patients" fill="#d8a321" radius={[0, 7, 7, 0]} maxBarSize={24} /></BarChart></ResponsiveContainer></div> : <EmptyPanel />}
+            <div><h2 className="text-lg font-bold">New patients by acquisition source</h2><p className="mt-1 text-sm text-[#756b59]">{sourceNote}</p></div>
+            {acquisition.sources.length ? <div className="mt-5 h-[330px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={acquisition.sources.slice(0, 8)} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }}><CartesianGrid stroke="#eee6d8" horizontal={false} /><XAxis type="number" allowDecimals={false} tick={{ fill: "#766b58", fontSize: 12 }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="source" width={130} tickFormatter={shortSource} tick={{ fill: "#4d4435", fontSize: 12 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => [`${number.format(Number(value))} patients`, "Unique patients"]} contentStyle={{ borderRadius: 12, borderColor: "#e2d7c2", boxShadow: "0 10px 30px rgba(61,45,17,.10)" }} /><Bar dataKey="patients" fill="#d8a321" radius={[0, 7, 7, 0]} maxBarSize={24} /></BarChart></ResponsiveContainer></div> : <EmptyPanel />}
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-[#e2d7c2] bg-[#fffefb] shadow-sm">
-            <div className="flex flex-col justify-between gap-3 border-b border-[#e8dfce] p-5 sm:flex-row sm:items-end sm:p-6"><div><h2 className="text-lg font-bold">Cost by acquisition source</h2><p className="mt-1 text-sm text-[#756b59]">Enter the spend assigned to each source to calculate source-level cost per patient.</p></div>{marketingSpend > 0 && <div className={`rounded-lg px-3 py-2 text-sm font-semibold ${Math.abs(marketingSpend - allocatedSpend) < 0.01 ? "bg-[#edf5e8] text-[#41612c]" : "bg-[#fff3d0] text-[#795600]"}`}>Allocated: {money.format(allocatedSpend)} of {money.format(marketingSpend)}</div>}</div>
-            <div className="max-h-[420px] overflow-auto"><Table><TableHeader className="sticky top-0 z-10 bg-[#faf5e9]"><TableRow><TableHead>Source</TableHead><TableHead className="text-right">Patients</TableHead><TableHead className="text-right">Revenue</TableHead><TableHead className="min-w-[150px] text-right">Spend (PHP)</TableHead><TableHead className="text-right">Cost / patient</TableHead></TableRow></TableHeader>
-              <TableBody>{metrics.sources.length ? metrics.sources.map((item) => { const spend = sourceSpend[item.source] || 0; return <TableRow key={item.source}><TableCell className="max-w-[220px] font-semibold text-[#463d30]">{item.source}</TableCell><TableCell className="text-right tabular-nums">{number.format(item.patients)}</TableCell><TableCell className="text-right tabular-nums">{money.format(item.revenue)}</TableCell><TableCell><Input aria-label={`Spend for ${item.source}`} type="number" min={0} step="100" value={spend || ""} placeholder="0.00" onChange={(e) => setSourceSpend((current) => ({ ...current, [item.source]: Math.max(0, Number(e.target.value) || 0) }))} className="ml-auto w-36 text-right tabular-nums" /></TableCell><TableCell className="text-right font-bold tabular-nums text-[#8b6512]">{spend > 0 ? money.format(spend / item.patients) : "—"}</TableCell></TableRow>; }) : <TableRow><TableCell colSpan={5} className="h-52 text-center text-[#7d725f]">Source results will appear after upload.</TableCell></TableRow>}</TableBody>
+            <div className="flex flex-col justify-between gap-3 border-b border-[#e8dfce] p-5 sm:flex-row sm:items-end sm:p-6"><div><h2 className="text-lg font-bold">Cost by acquisition source</h2><p className="mt-1 text-sm text-[#756b59]">Enter the spend assigned to each source to calculate cost per new patient. N/A is not a source and is not listed.</p></div>{marketingSpend > 0 && <div className={`rounded-lg px-3 py-2 text-sm font-semibold ${Math.abs(marketingSpend - allocatedSpend) < 0.01 ? "bg-[#edf5e8] text-[#41612c]" : "bg-[#fff3d0] text-[#795600]"}`}>Allocated: {money.format(allocatedSpend)} of {money.format(marketingSpend)}</div>}</div>
+            <div className="max-h-[420px] overflow-auto"><Table><TableHeader className="sticky top-0 z-10 bg-[#faf5e9]"><TableRow><TableHead>Source</TableHead><TableHead className="text-right">New patients</TableHead><TableHead className="text-right">Revenue</TableHead><TableHead className="min-w-[150px] text-right">Spend (PHP)</TableHead><TableHead className="text-right">Cost / patient</TableHead></TableRow></TableHeader>
+              <TableBody>{acquisition.sources.length ? acquisition.sources.map((item) => { const spend = sourceSpend[item.source] || 0; return <TableRow key={item.source}><TableCell className="max-w-[220px] font-semibold text-[#463d30]">{item.source}</TableCell><TableCell className="text-right tabular-nums">{number.format(item.patients)}</TableCell><TableCell className="text-right tabular-nums">{money.format(item.revenue)}</TableCell><TableCell><Input aria-label={`Spend for ${item.source}`} type="number" min={0} step="100" value={spend || ""} placeholder="0.00" onChange={(e) => setSourceSpend((current) => ({ ...current, [item.source]: Math.max(0, Number(e.target.value) || 0) }))} className="ml-auto w-36 text-right tabular-nums" /></TableCell><TableCell className="text-right font-bold tabular-nums text-[#8b6512]">{spend > 0 ? money.format(spend / item.patients) : "—"}</TableCell></TableRow>; }) : <TableRow><TableCell colSpan={5} className="h-52 text-center text-[#7d725f]">Source results will appear after upload.</TableCell></TableRow>}</TableBody>
             </Table></div>
           </div>
         </section>
-        <footer className="mt-6 flex flex-col gap-2 border-t border-[#ddd2bd] py-5 text-sm text-[#756b59] sm:flex-row sm:items-center sm:justify-between"><p>Counting rule: one unique Patient Name equals one acquired patient.</p><p>RETURNING PATIENTS combines SCHEDULED, WALK-IN, and HMO. Other patient types are excluded.</p></footer>
+        <footer className="mt-6 flex flex-col gap-2 border-t border-[#ddd2bd] py-5 text-sm text-[#756b59] sm:flex-row sm:items-center sm:justify-between"><p>Counting rule: one unique Patient Name equals one patient. Only new patients (NEW and HMO/NEW) have a source.</p><p>RETURNING PATIENTS combines SCHEDULED, WALK-IN, and HMO. Other patient types are excluded.</p></footer>
       </div>
     </main>
   );

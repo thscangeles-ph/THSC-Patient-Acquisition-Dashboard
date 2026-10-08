@@ -57,6 +57,7 @@ No environment variables are required.
   | SEND-IN | `SEND-IN` |
   | CLINICAL TRIAL | `CLINICAL TRIAL` |
 
+- **Source** is only asked of new patients, so the source chart, the cost-by-source table, and the acquisition cost per patient always use NEW and HMO/NEW patients, whatever the patient type filter. Each new patient is credited to the first source they gave. `N/A` (and blank) is not a source: new patients without one are left out of the source chart and table, and the dashboard shows how many.
 - Other `Patient Type` values, such as company accounts (`C/O Employee`, `PHILIPPINE NATIONAL POLICE`), are skipped. Each uploaded file shows how many rows were skipped.
 - The **Patients by type** table shows every type side by side. Select a row, or use the **Patient type** filter, to show that type in the cards, source chart, and cost table. The filter starts on NEW.
 - Patient names are used only for counting and are never displayed.
