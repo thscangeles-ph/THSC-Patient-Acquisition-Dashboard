@@ -25,7 +25,7 @@ export function SettingsPanel({ state, dispatch, onClose }: { state: QueueState;
     setMessage(result.ok ? { ok: true, text: "Settings saved. Every queue screen updates automatically." } : { ok: false, text: result.error });
   };
   const reset = async () => {
-    if (!window.confirm("Clear today's queue? All queue numbers, cards and calls for today are removed and numbering restarts at 01. Settings are kept.")) return;
+    if (!window.confirm("Clear today's queue? All queue numbers and calls for today are removed and numbering restarts at 01. Settings are kept.")) return;
     const result = await dispatch({ type: "resetDay" });
     setMessage(result.ok ? { ok: true, text: "Today's queue was cleared." } : { ok: false, text: result.error });
   };
@@ -59,8 +59,7 @@ export function SettingsPanel({ state, dispatch, onClose }: { state: QueueState;
       </div>
       <Button variant="outline" size="sm" className="mt-2" onClick={() => setDraft((current) => ({ ...current, stations: [...current.stations, { code: "", name: "", location: "", service: "consultation", selfCheckIn: true, active: true }] }))}><Plus size={15} /> Add station</Button>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
-        <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Laminated cards available<Input type="number" min={1} max={300} value={draft.cardCount} onChange={(event) => setDraft((current) => ({ ...current, cardCount: Number(event.target.value) }))} className="text-base font-normal" /></label>
+      <div className="mt-6 grid gap-4 md:grid-cols-1">
         <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">TV display message<Input value={draft.ticker} maxLength={240} onChange={(event) => setDraft((current) => ({ ...current, ticker: event.target.value }))} className="text-base font-normal" /></label>
       </div>
 

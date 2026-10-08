@@ -46,8 +46,8 @@ No environment variables are required. They are only needed to turn on the Queue
 The queue follows the clinic's arrival flow:
 
 1. **Patient arrives** and goes to the front desk.
-2. **Concierge** hands a walk-in patient a laminated card (Front desk → *Hand out card*) and calls the card when it is their turn to register. The card number shows on the TV.
-3. **Concierge registers the patient** on the Queue Board (and in the Lab Info System as usual), picks their services in order, and tells the patient their queue number, e.g. `01-C1-W`.
+2. **Queue number on arrival.** The concierge clicks *Walk-in number* or *Scheduled number* (Front desk → Step 1). The next daily number, e.g. `01-W`, is generated immediately, before registration; *Print slip* prints it on a small ticket for receipt printers. *Call next to register* calls the number to the front desk on the TV (priority-lane numbers first).
+3. **Concierge registers the patient** on the Queue Board (and in the Lab Info System as usual) by clicking *Register* on their number and picking their services in order. The number keeps its daily part and gains the station, e.g. `01-W` → `01-C1-W`. A patient who arrives without a number can be registered directly; they get the next number.
 4. **The patient watches the TV**, which shows every queue number being called and who is next.
 
 ### Queue numbers
@@ -63,7 +63,7 @@ The queue follows the clinic's arrival flow:
 
 | Screen | URL | Used by |
 | --- | --- | --- |
-| Front desk | `/queue` | Concierge: laminated cards, registration, today's patient list, one-time queue message, settings |
+| Front desk | `/queue` | Concierge: queue numbers on arrival (with printable slip), registration, today's patient list, one-time queue message, settings |
 | Stations | `/queue/station?s=C1` | Doctors, procedure and lab staff: *Call next*, call again, did not respond, complete, or complete and send to another station |
 | TV display | `/queue/display` | Lobby TV: now calling, now serving at each station, next in line. Tap once to turn on the chime and voice announcement |
 | QR check-in | `/queue/checkin` | Scheduled patients scan the QR poster on arrival and get their `S` queue number on their phone |

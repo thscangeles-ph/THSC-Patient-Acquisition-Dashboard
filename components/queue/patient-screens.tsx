@@ -129,6 +129,7 @@ export function TicketView() {
   const station = step ? findStation(state, step.station) : undefined;
   const ahead = patientsAhead(state, visit);
   const messages: Record<string, { title: string; text: string; icon: React.ReactNode; tone: string }> = {
+    registration: { title: "Waiting to register", text: "Watch the lobby TV. Your number will be called to the front desk for registration.", icon: <Clock />, tone: "bg-[#e8eef7] text-[#2d4a6e]" },
     called: { title: "It's your turn!", text: `Please proceed to ${station?.location || station?.name || "the station"}.`, icon: <BellRing />, tone: "bg-[#d8a321] text-[#2f281c]" },
     waiting: { title: ahead === 0 ? "You're next" : `${ahead} patient${ahead > 1 ? "s" : ""} ahead of you`, text: `Waiting for ${station?.name ?? "your service"}. Watch the lobby TV for your number.`, icon: <Clock />, tone: "bg-[#fff2c8] text-[#5f4307]" },
     missed: { title: "We called your number", text: "Please approach the front desk so we can put you back in line.", icon: <BellRing />, tone: "bg-[#fde8eb] text-[#9b1f35]" },

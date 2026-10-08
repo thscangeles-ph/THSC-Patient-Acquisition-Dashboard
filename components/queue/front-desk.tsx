@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BellRing, Check, CheckCircle2, Clock, IdCard, MessageSquareText, Plus, RotateCcw, Search, Settings2, ShieldCheck, Star, Ticket, UserCheck, X } from "lucide-react";
+import { BellRing, Check, CheckCircle2, Clock, MessageSquareText, Plus, Printer, RotateCcw, Search, Settings2, ShieldCheck, Star, Ticket, UserCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { currentLabel, currentStep, ticketLabel } from "@/lib/queue/reducer";
+import { arrivalLabel, currentLabel, currentStep, isRegistered, ticketLabel, waitingToRegister } from "@/lib/queue/reducer";
+import { printSlip } from "@/lib/queue/slip";
 import { formatTime, formatWait, minutesSince, queueMessage, STATUS_LABEL, STATUS_TONE, stationName, visitStatus } from "@/lib/queue/format";
 import type { ActionResult, PatientKind, QueueAction, QueueState, Visit } from "@/lib/queue/types";
 import { Panel, StaffShell } from "./staff-shell";
@@ -30,7 +31,7 @@ export function FrontDesk() {
 function Desk({ state, dispatch, shared, showSettings, closeSettings }: { state: QueueState; dispatch: Dispatch; shared: boolean; showSettings: boolean; closeSettings: () => void }) {
   const now = useNow();
   const [feedback, setFeedback] = useState<Feedback>(null);
-  const [prefillCard, setPrefillCard] = useState<{ card: number; key: number } | null>(null);
+  const [prefill, setPrefill] = useState<{ visitId: string; key: number } | null>(null);
 
   const run = async (action: QueueAction, success?: string) => {
     const result = await dispatch(action);
@@ -40,8 +41,9 @@ function Desk({ state, dispatch, shared, showSettings, closeSettings }: { state:
 
   const stats = useMemo(() => {
     const active = state.visits.filter((visit) => !visit.cancelled);
-    const waits = active.map((visit) => visit.steps[0]).filter((step) => step.calledAt && step.queuedAt).map((step) => (step.calledAt! - step.queuedAt!) / 60000);
+    const waits = active.map((visit) => visit.steps[0]).filter((step) => step?.calledAt && step.queuedAt).map((step) => (step.calledAt! - step.queuedAt!) / 60000);
     return {
+      toRegister: active.filter((visit) => visitStatus(visit) === "registration").length,
       waiting: active.filter((visit) => visitStatus(visit) === "waiting").length,
       serving: active.filter((visit) => visitStatus(visit) === "called").length,
       completed: active.filter((visit) => visitStatus(visit) === "completed").length,
@@ -54,10 +56,10 @@ function Desk({ state, dispatch, shared, showSettings, closeSettings }: { state:
     <div className="grid gap-5">
       {showSettings && <SettingsPanel state={state} dispatch={dispatch} onClose={closeSettings} />}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat icon={<Clock size={18} />} label="Waiting now" value={stats.waiting} detail="Across all stations" />
+        <Stat accent icon={<Ticket size={18} />} label="Waiting to register" value={stats.toRegister} detail="Have a queue number, not yet registered" />
+        <Stat icon={<Clock size={18} />} label="Waiting at stations" value={stats.waiting} detail={stats.avgWait === null ? "Registered, waiting to be called" : `Average first wait ${stats.avgWait} min`} />
         <Stat icon={<BellRing size={18} />} label="Being served" value={stats.serving} detail="Called to a station" />
-        <Stat icon={<CheckCircle2 size={18} />} label="Completed today" value={stats.completed} detail={`${stats.total} patients registered`} />
-        <Stat accent icon={<Ticket size={18} />} label="Average first wait" value={stats.avgWait === null ? "—" : `${stats.avgWait} min`} detail="Registration to first call" />
+        <Stat icon={<CheckCircle2 size={18} />} label="Completed today" value={stats.completed} detail={`${stats.total} queue numbers today`} />
       </section>
 
       {feedback && (
@@ -68,8 +70,8 @@ function Desk({ state, dispatch, shared, showSettings, closeSettings }: { state:
 
       <div className="grid items-start gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
         <div className="grid gap-5">
-          <RegistrationLine state={state} now={now} run={run} onRegister={(card) => setPrefillCard({ card, key: Date.now() })} />
-          <RegisterForm key={prefillCard?.key ?? 0} state={state} run={run} shared={shared} initialCard={prefillCard?.card ?? null} />
+          <ArrivalPanel state={state} now={now} run={run} onRegister={(visitId) => setPrefill({ visitId, key: Date.now() })} />
+          <RegisterForm key={prefill?.key ?? 0} state={state} run={run} shared={shared} initialVisitId={prefill?.visitId ?? null} />
         </div>
         <PatientList state={state} now={now} run={run} shared={shared} />
       </div>
@@ -87,33 +89,53 @@ function Stat({ icon, label, value, detail, accent = false }: { icon: React.Reac
   );
 }
 
-function RegistrationLine({ state, now, run, onRegister }: { state: QueueState; now: number | null; run: (action: QueueAction, success?: string) => Promise<ActionResult>; onRegister: (card: number) => void }) {
-  const [cardNumber, setCardNumber] = useState("");
-  const cards = [...state.cards].sort((a, b) => a.issuedAt - b.issuedAt);
-  const issue = async () => {
-    const wanted = cardNumber.trim() ? Number(cardNumber) : undefined;
-    const result = await run({ type: "issueCard", card: wanted });
-    if (result.ok) setCardNumber("");
+const slip = (label: string, issuedAt: number) => printSlip(label, issuedAt, `${window.location.origin}/theheartspecialists.png`);
+
+function ArrivalPanel({ state, now, run, onRegister }: { state: QueueState; now: number | null; run: (action: QueueAction, success?: string) => Promise<ActionResult>; onRegister: (visitId: string) => void }) {
+  const [priority, setPriority] = useState(false);
+  const [latest, setLatest] = useState<string | null>(null);
+  const [printEach, setPrintEach] = useState(false);
+  const waiting = waitingToRegister(state);
+  const latestVisit = latest ? state.visits.find((visit) => visit.id === latest) : undefined;
+
+  const generate = async (kind: PatientKind) => {
+    const result = await run({ type: "arrive", kind, priority });
+    if (!result.ok) return;
+    setLatest(result.visitId!);
+    setPriority(false);
+    if (printEach) slip(result.label!, Date.now());
   };
+
   return (
-    <Panel title="Step 1 · Registration line" description="Walk-in patients receive a laminated number while they wait to register."
-      actions={<Button size="sm" onClick={() => run({ type: "callCard" })} disabled={!cards.some((card) => card.calledAt === null)} className="bg-[#2f281c] text-[#f0c864] hover:bg-[#4a3d27]"><BellRing size={15} /> Call next card</Button>}>
-      <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void issue(); }}>
-        <Input type="number" min={1} max={state.settings.cardCount} value={cardNumber} onChange={(event) => setCardNumber(event.target.value)} placeholder="Auto" aria-label="Laminated card number" className="w-24 text-base" />
-        <Button type="submit" className="flex-1 bg-[#8b6512] text-white hover:bg-[#6f4e0a]"><IdCard size={16} /> Hand out card</Button>
-      </form>
-      <ul className="scrollbar-thin -mr-2 mt-4 grid max-h-[340px] gap-2 overflow-y-auto pr-2">
-        {cards.length === 0 && <li className="rounded-xl border border-dashed border-[#d8c8a6] px-4 py-5 text-center text-sm text-[#857967]">No one is waiting to register.</li>}
-        {cards.map((card) => (
-          <li key={card.number} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${card.calledAt ? "border-[#d8a321] bg-[#fff9e9]" : "border-[#e8dfce]"}`}>
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[#2f281c] text-lg font-extrabold tabular-nums text-[#f0c864]">{card.number}</span>
+    <Panel title="Step 1 · Queue number on arrival" description="Generate the patient's number as soon as they arrive, before registration."
+      actions={<Button size="sm" onClick={() => run({ type: "callRegistration" })} disabled={!waiting.some((visit) => visit.regCalledAt === null)} className="bg-[#2f281c] text-[#f0c864] hover:bg-[#4a3d27]"><BellRing size={15} /> Call next to register</Button>}>
+      <div className="grid grid-cols-2 gap-2">
+        <Button onClick={() => void generate("W")} className="h-12 bg-[#8b6512] text-base text-white hover:bg-[#6f4e0a]"><Ticket size={17} /> Walk-in number</Button>
+        <Button onClick={() => void generate("S")} variant="outline" className="h-12 text-base"><Ticket size={17} /> Scheduled number</Button>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={priority} onChange={(event) => setPriority(event.target.checked)} className="h-4 w-4 accent-[#8b6512]" /><span><b>Priority lane</b> <span className="text-[#756b59]">(senior, PWD, pregnant)</span></span></label>
+        <label className="flex items-center gap-2 text-[#5e5443]"><input type="checkbox" checked={printEach} onChange={(event) => setPrintEach(event.target.checked)} className="h-4 w-4 accent-[#8b6512]" />Print a slip for each number</label>
+      </div>
+      {latestVisit && !latestVisit.cancelled && !isRegistered(latestVisit) && (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-[#d8a321] bg-[#2f281c] px-4 py-3 text-white">
+          <div><p className="text-xs font-semibold text-[#f0c864]">New queue number — give it to the patient</p><p className="font-mono text-3xl font-extrabold tracking-wide">{arrivalLabel(latestVisit)}</p></div>
+          <Button size="sm" variant="secondary" onClick={() => slip(arrivalLabel(latestVisit), latestVisit.createdAt)}><Printer size={15} /> Print slip</Button>
+        </div>
+      )}
+      <p className="mt-5 text-xs font-semibold uppercase tracking-[0.08em] text-[#8b6512]">Waiting to register · {waiting.length}</p>
+      <ul className="scrollbar-thin -mr-2 mt-2 grid max-h-[340px] gap-2 overflow-y-auto pr-2">
+        {waiting.length === 0 && <li className="rounded-xl border border-dashed border-[#d8c8a6] px-4 py-5 text-center text-sm text-[#857967]">No one is waiting to register.</li>}
+        {waiting.map((visit) => (
+          <li key={visit.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${visit.regCalledAt ? "border-[#d8a321] bg-[#fff9e9]" : "border-[#e8dfce]"}`}>
+            <span className="min-w-[64px] rounded-lg bg-[#2f281c] px-2 py-1.5 text-center font-mono text-lg font-extrabold text-[#f0c864]">{arrivalLabel(visit)}</span>
             <div className="min-w-0 flex-1 text-sm">
-              <p className="font-semibold">{card.calledAt ? `Called ${card.calls > 1 ? `×${card.calls}` : ""}` : "Waiting"}</p>
-              <p className="text-[#7d725f]">Since {formatTime(card.issuedAt)} · {formatWait(minutesSince(card.issuedAt, now))}</p>
+              <p className="font-semibold">{visit.regCalledAt ? `Called${visit.regCalls > 1 ? ` ×${visit.regCalls}` : ""}` : "Waiting"}{visit.priority && <span className="ml-2 rounded-full bg-[#fff0bd] px-2 py-0.5 text-xs text-[#5f4307]">Priority</span>}</p>
+              <p className="text-[#7d725f]">Arrived {formatTime(visit.createdAt)} · {formatWait(minutesSince(visit.createdAt, now))}</p>
             </div>
-            <Button size="icon-sm" variant="outline" title="Call this card" aria-label={`Call card ${card.number}`} onClick={() => run({ type: "callCard", card: card.number })}><BellRing size={15} /></Button>
-            <Button size="sm" onClick={() => onRegister(card.number)} className="bg-[#8b6512] text-white hover:bg-[#6f4e0a]">Register</Button>
-            <Button size="icon-sm" variant="ghost" title="Remove card" aria-label={`Remove card ${card.number}`} onClick={() => run({ type: "removeCard", card: card.number })}><X size={15} /></Button>
+            <Button size="icon-sm" variant="outline" title="Call to register" aria-label={`Call ${arrivalLabel(visit)} to register`} onClick={() => run({ type: "callRegistration", visitId: visit.id })}><BellRing size={15} /></Button>
+            <Button size="sm" onClick={() => onRegister(visit.id)} className="bg-[#8b6512] text-white hover:bg-[#6f4e0a]">Register</Button>
+            <Button size="icon-sm" variant="ghost" title="Remove number" aria-label={`Remove ${arrivalLabel(visit)}`} onClick={() => { if (window.confirm(`Remove ${arrivalLabel(visit)}? Use this if the patient left before registering.`)) void run({ type: "cancel", visitId: visit.id }); }}><X size={15} /></Button>
           </li>
         ))}
       </ul>
@@ -121,26 +143,35 @@ function RegistrationLine({ state, now, run, onRegister }: { state: QueueState; 
   );
 }
 
-function RegisterForm({ state, run, shared, initialCard }: { state: QueueState; run: (action: QueueAction, success?: string) => Promise<ActionResult>; shared: boolean; initialCard: number | null }) {
-  const [kind, setKind] = useState<PatientKind>("W");
-  const [card, setCard] = useState<number | null>(initialCard);
+function RegisterForm({ state, run, shared, initialVisitId }: { state: QueueState; run: (action: QueueAction, success?: string) => Promise<ActionResult>; shared: boolean; initialVisitId: string | null }) {
+  const initial = initialVisitId ? state.visits.find((visit) => visit.id === initialVisitId) : undefined;
+  const [arrivalId, setArrivalId] = useState<string | null>(initial?.id ?? null);
+  const [kind, setKind] = useState<PatientKind>(initial?.kind ?? "W");
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [notes, setNotes] = useState("");
-  const [priority, setPriority] = useState(false);
+  const [priority, setPriority] = useState(initial?.priority ?? false);
   const [stations, setStations] = useState<string[]>([]);
   const [issued, setIssued] = useState<{ visitId: string; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const available = state.settings.stations.filter((station) => station.active);
   const issuedVisit = issued ? state.visits.find((visit) => visit.id === issued.visitId) : undefined;
+  const waiting = waitingToRegister(state);
+  const arrival = arrivalId ? waiting.find((visit) => visit.id === arrivalId) : undefined;
+  const previewSeq = arrival?.seq ?? state.nextSeq;
+  const chooseArrival = (id: string | null) => {
+    setArrivalId(id);
+    const visit = id ? waiting.find((item) => item.id === id) : undefined;
+    if (visit) { setKind(visit.kind); setPriority(visit.priority); }
+  };
 
   const submit = async () => {
     setBusy(true);
-    const result = await run({ type: "register", visit: { kind, name, mobile, notes, priority, stations, card: kind === "W" ? card : null } });
+    const result = await run({ type: "register", visitId: arrival?.id, visit: { kind, name, mobile, notes, priority, stations } });
     setBusy(false);
     if (!result.ok) return;
     setIssued({ visitId: result.visitId!, label: result.label! });
-    setName(""); setMobile(""); setNotes(""); setPriority(false); setStations([]); setCard(null);
+    setName(""); setMobile(""); setNotes(""); setPriority(false); setStations([]); setArrivalId(null); setKind("W");
   };
 
   return (
@@ -162,15 +193,12 @@ function RegisterForm({ state, run, shared, initialCard }: { state: QueueState; 
             <button key={value} type="button" role="radio" aria-checked={kind === value} onClick={() => setKind(value)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${kind === value ? "bg-white text-[#2f281c] shadow-sm" : "text-[#756b59]"}`}>{label}</button>
           ))}
         </div>
-        {kind === "W" && (
-          <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Laminated card
-            <select value={card ?? ""} onChange={(event) => setCard(event.target.value ? Number(event.target.value) : null)} className="h-[42px] rounded-md border border-[#d8c79f] bg-white px-3 text-base font-normal">
-              <option value="">No card</option>
-              {[...state.cards].sort((a, b) => a.number - b.number).map((item) => <option key={item.number} value={item.number}>Card {item.number}</option>)}
-              {card !== null && !state.cards.some((item) => item.number === card) && <option value={card}>Card {card}</option>}
-            </select>
-          </label>
-        )}
+        <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Queue number
+          <select value={arrival?.id ?? ""} onChange={(event) => chooseArrival(event.target.value || null)} className="h-[42px] rounded-md border border-[#d8c79f] bg-white px-3 text-base font-normal">
+            <option value="">New number ({String(state.nextSeq).padStart(2, "0")}) — patient has no number yet</option>
+            {waiting.map((visit) => <option key={visit.id} value={visit.id}>{arrivalLabel(visit)} · arrived {formatTime(visit.createdAt)}</option>)}
+          </select>
+        </label>
         <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Patient name<Input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" autoComplete="off" className="text-base font-normal" /></label>
         <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Mobile number <span className="-mt-1 text-xs font-normal text-[#857967]">Optional — for the one-time queue message</span><Input type="tel" value={mobile} onChange={(event) => setMobile(event.target.value)} placeholder="09XX XXX XXXX" autoComplete="off" className="text-base font-normal" /></label>
         <fieldset className="grid gap-2">
@@ -180,7 +208,7 @@ function RegisterForm({ state, run, shared, initialCard }: { state: QueueState; 
               {stations.map((code, index) => (
                 <li key={`${code}-${index}`} className="flex items-center gap-2 rounded-lg border border-[#e8dfce] bg-[#faf7f0] px-3 py-1.5 text-sm">
                   <span className="font-mono font-bold text-[#8b6512]">{index + 1}.</span>
-                  <span className="font-mono font-semibold">{ticketLabel({ seq: state.nextSeq, kind }, code)}</span>
+                  <span className="font-mono font-semibold">{ticketLabel({ seq: previewSeq, kind }, code)}</span>
                   <span className="flex-1 truncate text-[#5e5443]">{stationName(state, code)}</span>
                   <button type="button" aria-label={`Remove ${stationName(state, code)}`} onClick={() => setStations((current) => current.filter((_, position) => position !== index))} className="text-[#857967] hover:text-[#b4233c]"><X size={15} /></button>
                 </li>
@@ -239,7 +267,7 @@ function PatientList({ state, now, run, shared }: { state: QueueState; now: numb
   const toVerify = state.visits.filter((visit) => !visit.verified && !visit.cancelled).length;
 
   return (
-    <Panel title="Today's patients" description={toVerify ? `${toVerify} QR self check-in${toVerify > 1 ? "s" : ""} to verify at the desk.` : "Every registered patient and where they are now."}
+    <Panel title="Today's patients" description={toVerify ? `${toVerify} QR self check-in${toVerify > 1 ? "s" : ""} to verify at the desk.` : "Every queue number today and where the patient is now."}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative"><Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8b6512]" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or number" aria-label="Search patients" className="h-9 w-48 pl-8" /></div>
@@ -261,9 +289,9 @@ function PatientList({ state, now, run, shared }: { state: QueueState; now: numb
               const since = step?.status === "called" ? step.calledAt : step?.queuedAt ?? null;
               return (
                 <TableRow key={visit.id} className={visit.cancelled ? "opacity-60" : ""}>
-                  <TableCell className="pl-5"><span className="font-mono text-base font-extrabold">{currentLabel(visit)}</span>{visit.card !== null && <span className="block text-xs text-[#857967]">Card {visit.card}</span>}</TableCell>
+                  <TableCell className="pl-5"><span className="font-mono text-base font-extrabold">{currentLabel(visit)}</span><span className="block text-xs text-[#857967]">Arrived {formatTime(visit.createdAt)}</span></TableCell>
                   <TableCell className="max-w-[240px]">
-                    <p className="truncate font-semibold">{visit.name}</p>
+                    <p className="truncate font-semibold">{visit.name || <span className="font-normal italic text-[#857967]">Not registered yet</span>}</p>
                     <div className="mt-0.5 flex flex-wrap gap-1 text-xs">
                       {visit.priority && <span className="rounded-full bg-[#fff0bd] px-2 py-0.5 font-semibold text-[#5f4307]">Priority</span>}
                       {visit.source === "self" && <span className={`rounded-full px-2 py-0.5 font-semibold ${visit.verified ? "bg-[#edf5e8] text-[#41612c]" : "bg-[#fde8eb] text-[#9b1f35]"}`}>{visit.verified ? "QR check-in" : "QR check-in · verify"}</span>}
@@ -283,9 +311,9 @@ function PatientList({ state, now, run, shared }: { state: QueueState; now: numb
                       <div className="flex justify-end gap-1.5">
                         {!visit.verified && <Button size="sm" variant="outline" onClick={() => run({ type: "verify", visitId: visit.id })}><UserCheck size={15} /> Verify</Button>}
                         {status === "missed" && <Button size="sm" variant="outline" onClick={() => run({ type: "requeue", visitId: visit.id }, `${currentLabel(visit)} is back in line.`)}><RotateCcw size={15} /> Return to line</Button>}
-                        {status !== "completed" && <MessageButton state={state} visit={visit} run={run} shared={shared} />}
+                        {status !== "completed" && status !== "registration" && <MessageButton state={state} visit={visit} run={run} shared={shared} />}
                         <Button size="icon-sm" variant="ghost" title={visit.priority ? "Remove priority" : "Mark as priority"} aria-label={visit.priority ? "Remove priority" : "Mark as priority"} onClick={() => run({ type: "updateVisit", visitId: visit.id, priority: !visit.priority })}><Star size={15} className={visit.priority ? "fill-[#d8a321] text-[#d8a321]" : ""} /></Button>
-                        {status !== "completed" && <Button size="icon-sm" variant="ghost" title="Cancel visit" aria-label="Cancel visit" onClick={() => { if (window.confirm(`Cancel ${currentLabel(visit)} (${visit.name})?`)) void run({ type: "cancel", visitId: visit.id }); }}><X size={15} /></Button>}
+                        {status !== "completed" && <Button size="icon-sm" variant="ghost" title="Cancel visit" aria-label="Cancel visit" onClick={() => { if (window.confirm(`Cancel ${currentLabel(visit)}${visit.name ? ` (${visit.name})` : ""}?`)) void run({ type: "cancel", visitId: visit.id }); }}><X size={15} /></Button>}
                       </div>
                     )}
                   </TableCell>

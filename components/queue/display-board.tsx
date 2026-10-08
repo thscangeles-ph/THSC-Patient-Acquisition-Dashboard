@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Expand, Volume2, VolumeX } from "lucide-react";
-import { servingAt, ticketLabel, TIME_ZONE, waitingFor } from "@/lib/queue/reducer";
+import { arrivalLabel, servingAt, ticketLabel, TIME_ZONE, waitingFor, waitingToRegister } from "@/lib/queue/reducer";
 import { spokenLabel } from "@/lib/queue/format";
 import type { Announcement, QueueState } from "@/lib/queue/types";
 import { SyncBadge } from "./staff-shell";
@@ -29,7 +29,6 @@ function chime(context: AudioContext) {
 }
 
 function speechFor(item: Announcement) {
-  if (item.kind === "card") return `${item.label.replace("Card", "Card number")}. Please proceed to the ${item.destination}.`;
   return `Queue number, ${spokenLabel(item.label)}. Please proceed to ${item.destination}.`;
 }
 
@@ -107,7 +106,10 @@ function Board({ state, now }: { state: QueueState; now: number | null }) {
   const stations = state.settings.stations.filter((station) => station.active);
   const latest = state.announcements[state.announcements.length - 1];
   const fresh = Boolean(latest && now && now - latest.at < HIGHLIGHT_MS);
-  const lastCard = [...state.announcements].reverse().find((item) => item.kind === "card" && state.cards.some((card) => `Card ${card.number}` === item.label));
+  const toRegister = waitingToRegister(state);
+  // The number most recently called to the front desk, while that patient is still registering.
+  const registering = [...toRegister].filter((visit) => visit.regCalledAt).sort((a, b) => b.regCalledAt! - a.regCalledAt!)[0];
+  const nextToRegister = toRegister.filter((visit) => visit !== registering);
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] gap-[1.5vw] p-[1.5vw]">
@@ -136,7 +138,16 @@ function Board({ state, now }: { state: QueueState; now: number | null }) {
 
       <section className="flex min-h-0 flex-col rounded-[1.5vw] border border-[#4a3d27] bg-[#2a2318] p-[1.4vw]">
         <h2 className="text-[1.6vw] font-bold uppercase tracking-[0.14em] text-[#f0c864]">Next in line</h2>
-        {lastCard && <div className="mt-[1.2vh] flex items-baseline justify-between rounded-[0.8vw] bg-[#4a3612] px-[1.2vw] py-[1vh]"><span className="text-[1.3vw] text-[#f4e8c7]">Registration · Front Desk</span><span className="font-mono text-[2.4vw] font-extrabold">{lastCard.label}</span></div>}
+        {(registering || nextToRegister.length > 0) && (
+          <div className="mt-[1.2vh] rounded-[0.8vw] bg-[#4a3612] px-[1.2vw] py-[1vh]">
+            <p className="flex items-baseline justify-between text-[1.1vw] text-[#f4e8c7]"><span>Registration · Front Desk</span><span className="tabular-nums">{toRegister.length} waiting</span></p>
+            <div className="mt-[0.6vh] flex flex-wrap items-center gap-[0.6vw]">
+              {registering && <span className="rounded-[0.5vw] bg-[#f0c864] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-extrabold text-[#2f281c]">{arrivalLabel(registering)}</span>}
+              {nextToRegister.slice(0, 5).map((visit) => <span key={visit.id} className="rounded-[0.5vw] bg-[#3a3022] px-[0.8vw] py-[0.3vh] font-mono text-[1.75vw] font-bold">{arrivalLabel(visit)}</span>)}
+              {nextToRegister.length > 5 && <span className="text-[1.2vw] text-[#cbbd9d]">+{nextToRegister.length - 5} more</span>}
+            </div>
+          </div>
+        )}
         <div className="mt-[1.2vh] grid min-h-0 flex-1 content-start gap-[1.2vh] overflow-hidden">
           {stations.map((station) => {
             const waiting = waitingFor(state, station.code);

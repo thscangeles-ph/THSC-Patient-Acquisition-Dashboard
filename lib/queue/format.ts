@@ -1,16 +1,18 @@
-import { currentLabel, currentStep, findStation, TIME_ZONE, waitingFor } from "./reducer";
+import { currentLabel, currentStep, findStation, isRegistered, TIME_ZONE, waitingFor } from "./reducer";
 import type { QueueState, Visit } from "./types";
 
-export type VisitStatus = "waiting" | "called" | "missed" | "completed" | "cancelled" | "pending";
+export type VisitStatus = "registration" | "waiting" | "called" | "missed" | "completed" | "cancelled" | "pending";
 
 export function visitStatus(visit: Visit): VisitStatus {
   if (visit.cancelled) return "cancelled";
+  if (!isRegistered(visit)) return "registration";
   const step = currentStep(visit);
   if (!step) return "completed";
   return step.status === "done" ? "completed" : step.status;
 }
 
 export const STATUS_LABEL: Record<VisitStatus, string> = {
+  registration: "To register",
   waiting: "Waiting",
   called: "Now serving",
   missed: "Missed call",
@@ -20,6 +22,7 @@ export const STATUS_LABEL: Record<VisitStatus, string> = {
 };
 
 export const STATUS_TONE: Record<VisitStatus, string> = {
+  registration: "bg-[#e8eef7] text-[#2d4a6e]",
   waiting: "bg-[#fff2c8] text-[#6f4e0a]",
   called: "bg-[#2f281c] text-[#f0c864]",
   missed: "bg-[#fde8eb] text-[#9b1f35]",
