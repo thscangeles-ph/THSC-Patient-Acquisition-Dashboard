@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { InstallAppButton } from "@/components/pwa";
 
 type DataRow = { date: Date | null; transaction: string; patient: string; patientType: string; source: string; revenue: number; rowKey: string };
 type FileSummary = { name: string; rows: number };
@@ -195,7 +196,10 @@ export default function Home() {
             <img src="/theheartspecialists.png" alt="The Heart Specialists Clinic logo" width="62" height="48" className="h-12 w-[62px] shrink-0 object-contain" />
             <div className="min-w-0"><p className="truncate text-sm font-semibold tracking-[0.08em] text-[#f0c864]">THE HEART SPECIALISTS CLINIC</p><h1 className="truncate text-lg font-bold tracking-tight text-white sm:text-xl">Patient Acquisition Dashboard</h1></div>
           </div>
-          {hasData && <Button variant="outline" onClick={reset} className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white"><RefreshCw size={16} /> Start over</Button>}
+          <div className="flex shrink-0 items-center gap-2">
+            <InstallAppButton className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white" />
+            {hasData && <Button variant="outline" onClick={reset} className="border-[#d8a321] bg-transparent text-white hover:bg-[#4a3d27] hover:text-white"><RefreshCw size={16} /> Start over</Button>}
+          </div>
         </div>
       </header>
 
@@ -206,7 +210,7 @@ export default function Home() {
               <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#fff2c8] text-[#8b6512]"><Upload size={26} /></div>
               <div className="flex-1"><h2 className="text-xl font-bold tracking-tight">Upload your sales report</h2><p className="mt-1 max-w-2xl text-base leading-6 text-[#6a604f]">Use the same Detailed Sales Report format. You may upload the NEW and HMO/NEW files together.</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3"><Button onClick={() => inputRef.current?.click()} className="bg-[#8b6512] text-white hover:bg-[#6f4e0a]"><FileSpreadsheet size={17} /> Choose Excel files</Button><span className="text-sm text-[#746957]">.xlsx or .xls</span></div>
-                <input ref={inputRef} type="file" multiple accept=".xlsx,.xls" className="sr-only" onChange={(e) => void processFiles(Array.from(e.target.files || []))} />
+                <input ref={inputRef} type="file" multiple accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="sr-only" onChange={(e) => void processFiles(Array.from(e.target.files || []))} />
               </div>
             </div>
           </div>
