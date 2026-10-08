@@ -11,9 +11,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { InstallAppButton } from "@/components/pwa";
 
-type DataRow = { date: Date | null; transaction: string; patient: string; patientType: string; source: string; revenue: number; rowKey: string };
-type FileSummary = { name: string; rows: number };
-type PatientTypeFilter = "all" | "new" | "hmo";
+type PatientGroup = "NEW" | "HMO/NEW" | "SCHEDULED" | "WALK-IN" | "HMO" | "HOME SERVICE" | "SEND-IN" | "CLINICAL TRIAL";
+type DataRow = { date: Date | null; transaction: string; patient: string; group: PatientGroup; source: string; revenue: number; rowKey: string };
+type FileSummary = { name: string; rows: number; skipped: number };
+
+const PATIENT_TYPES = [
+  { id: "new", label: "NEW", description: "NEW and HMO/NEW patients", groups: ["NEW", "HMO/NEW"] },
+  { id: "scheduled", label: "SCHEDULED", description: "Returning scheduled patients", groups: ["SCHEDULED"] },
+  { id: "walk-in", label: "WALK-IN", description: "Returning walk-in patients", groups: ["WALK-IN"] },
+  { id: "returning", label: "RETURNING PATIENTS", description: "SCHEDULED, WALK-IN, and HMO", groups: ["SCHEDULED", "WALK-IN", "HMO"] },
+  { id: "home-service", label: "HOME SERVICE", description: "Home service patients", groups: ["HOME SERVICE"] },
+  { id: "send-in", label: "SEND-IN", description: "Send-in patients", groups: ["SEND-IN"] },
+  { id: "clinical-trial", label: "CLINICAL TRIAL", description: "Clinical trial patients", groups: ["CLINICAL TRIAL"] },
+] as const satisfies readonly { id: string; label: string; description: string; groups: readonly PatientGroup[] }[];
+type PatientType = (typeof PATIENT_TYPES)[number];
+type PatientTypeFilter = "all" | PatientType["id"];
+const FILTER_VALUES: PatientTypeFilter[] = ["all", ...PATIENT_TYPES.map((type) => type.id)];
 
 declare global {
   interface Document {
@@ -43,12 +56,16 @@ function parseDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function patientTypeGroup(value: string): "NEW" | "HMO/NEW" | "OTHER" {
-  const v = normalize(value);
-  if (v === "HMO/NEW" || v === "HMO NEW") return "HMO/NEW";
-  if (v === "NEW") return "NEW";
-  return "OTHER";
-}
+const GROUP_BY_KEY: Record<string, PatientGroup> = {
+  NEW: "NEW", HMONEW: "HMO/NEW", SCHEDULED: "SCHEDULED", WALKIN: "WALK-IN", HMO: "HMO",
+  HOMESERVICE: "HOME SERVICE", SENDIN: "SEND-IN", CLINICALTRIAL: "CLINICAL TRIAL",
+};
+
+// Matches spelling variants such as "HMO NEW", "WALK IN", or "Home-Service". Other types (company accounts, blanks) return null.
+const patientTypeGroup = (value: string): PatientGroup | null => GROUP_BY_KEY[normalize(value).replace(/[^A-Z0-9]/g, "")] ?? null;
+
+const filterLabel = (filter: PatientTypeFilter) => filter === "all" ? "All patient types" : PATIENT_TYPES.find((type) => type.id === filter)!.label;
+const matchesFilter = (group: PatientGroup, filter: PatientTypeFilter) => filter === "all" || (PATIENT_TYPES.find((type) => type.id === filter)!.groups as readonly PatientGroup[]).includes(group);
 
 const sourceLabel = (value: string) => clean(value) || "Not specified";
 const shortSource = (value: string) => value.length > 22 ? `${value.slice(0, 21)}…` : value;
@@ -59,7 +76,7 @@ export default function Home() {
   const [files, setFiles] = useState<FileSummary[]>([]);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [filter, setFilter] = useState<PatientTypeFilter>("all");
+  const [filter, setFilter] = useState<PatientTypeFilter>("new");
   const [marketingSpend, setMarketingSpend] = useState(0);
   const [sourceSpend, setSourceSpend] = useState<Record<string, number>>({});
 
@@ -84,22 +101,24 @@ export default function Home() {
         const indexes = Object.fromEntries(REQUIRED_HEADERS.map((header) => [header, indexOf(header)]));
         const serviceIndex = headers.findIndex((header) => normalize(header) === "TEST EXAMINATION");
         let accepted = 0;
+        let skipped = 0;
         grid.slice(headerIndex + 1).forEach((row, offset) => {
           const patient = clean(row[indexes["Patient Name"]]);
-          const type = clean(row[indexes["Patient Type"]]);
-          if (!patient || patientTypeGroup(type) === "OTHER") return;
+          if (!patient) return;
+          const group = patientTypeGroup(clean(row[indexes["Patient Type"]]));
+          if (!group) { skipped += 1; return; }
           const transaction = clean(row[indexes["Transaction No."]]);
           const source = sourceLabel(clean(row[indexes.Source]));
           const revenue = Number(row[indexes["Total Payment"]]) || 0;
           const dateValue = row[indexes.Date];
           const service = serviceIndex >= 0 ? clean(row[serviceIndex]) : String(offset);
           const rowKey = [normalize(patient), normalize(transaction), normalize(service), revenue.toFixed(2), clean(dateValue)].join("|");
-          parsedRows.push({ date: parseDate(dateValue), transaction, patient: normalize(patient), patientType: type, source, revenue, rowKey });
+          parsedRows.push({ date: parseDate(dateValue), transaction, patient: normalize(patient), group, source, revenue, rowKey });
           accepted += 1;
         });
-        parsedFiles.push({ name: file.name, rows: accepted });
+        parsedFiles.push({ name: file.name, rows: accepted, skipped });
       }
-      if (!parsedRows.length) throw new Error(problems.join(" ") || "No NEW or HMO/NEW patient records were found.");
+      if (!parsedRows.length) throw new Error(problems.join(" ") || "No records with a supported patient type were found.");
       const unique = new Map<string, DataRow>();
       [...rows, ...parsedRows].forEach((row) => unique.set(row.rowKey, row));
       setRows(Array.from(unique.values()));
@@ -112,17 +131,34 @@ export default function Home() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "The workbook could not be read."); }
   }, [rows]);
 
-  const filteredRows = useMemo(() => rows.filter((row) => {
-    const type = patientTypeGroup(row.patientType);
-    return filter === "all" || (filter === "new" && type === "NEW") || (filter === "hmo" && type === "HMO/NEW");
-  }), [rows, filter]);
+  const filteredRows = useMemo(() => rows.filter((row) => matchesFilter(row.group, filter)), [rows, filter]);
+
+  const patientTypes = useMemo(() => {
+    const summarize = (subset: DataRow[]) => {
+      const patients = new Set<string>();
+      const transactions = new Set<string>();
+      const byGroup = new Map<PatientGroup, Set<string>>();
+      let revenue = 0;
+      subset.forEach((row) => {
+        patients.add(row.patient);
+        if (row.transaction) transactions.add(row.transaction);
+        if (!byGroup.has(row.group)) byGroup.set(row.group, new Set());
+        byGroup.get(row.group)!.add(row.patient);
+        revenue += row.revenue;
+      });
+      return { patients: patients.size, transactions: transactions.size, revenue, byGroup: new Map(Array.from(byGroup, ([group, names]) => [group, names.size])) };
+    };
+    const total = summarize(rows);
+    const types = PATIENT_TYPES.map((type) => ({ ...type, ...summarize(rows.filter((row) => matchesFilter(row.group, type.id))) }));
+    return { total, types };
+  }, [rows]);
 
   const metrics = useMemo(() => {
-    const patients = new Map<string, { source: string; type: string }>();
+    const patients = new Map<string, { source: string; group: PatientGroup }>();
     const transactions = new Set<string>();
     let revenue = 0;
     filteredRows.forEach((row) => {
-      if (!patients.has(row.patient)) patients.set(row.patient, { source: row.source, type: patientTypeGroup(row.patientType) });
+      if (!patients.has(row.patient)) patients.set(row.patient, { source: row.source, group: row.group });
       if (row.transaction) transactions.add(row.transaction);
       revenue += row.revenue;
     });
@@ -139,10 +175,14 @@ export default function Home() {
       sources.get(row.source)!.revenue += row.revenue;
     });
     const sourceRows = Array.from(sources.entries()).map(([source, data]) => ({ source, patients: data.patients.size, revenue: data.revenue })).sort((a, b) => b.patients - a.patients || b.revenue - a.revenue);
-    const counts = { NEW: 0, "HMO/NEW": 0 };
-    patients.forEach((patient) => { if (patient.type === "NEW" || patient.type === "HMO/NEW") counts[patient.type] += 1; });
-    return { patients: patients.size, transactions: transactions.size, revenue, minDate, maxDate, sources: sourceRows, counts };
+    return { patients: patients.size, transactions: transactions.size, revenue, minDate, maxDate, sources: sourceRows };
   }, [filteredRows]);
+
+  const selectedType = PATIENT_TYPES.find((type) => type.id === filter);
+  const selectedSummary = patientTypes.types.find((type) => type.id === filter);
+  const patientDetail = selectedType && selectedSummary
+    ? selectedType.groups.length > 1 ? groupBreakdown(selectedType.groups, selectedSummary.byGroup) : selectedType.description
+    : "Across all patient types";
 
   const allocatedSpend = Object.values(sourceSpend).reduce((sum, value) => sum + (Number(value) || 0), 0);
   const acquisitionCost = metrics.patients ? marketingSpend / metrics.patients : 0;
@@ -151,7 +191,7 @@ export default function Home() {
     : "Waiting for a workbook";
 
   const reset = () => {
-    setRows([]); setFiles([]); setError(""); setMarketingSpend(0); setSourceSpend({}); setFilter("all");
+    setRows([]); setFiles([]); setError(""); setMarketingSpend(0); setSourceSpend({}); setFilter("new");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -173,12 +213,12 @@ export default function Home() {
       }, { signal: lifecycle.signal });
       await context.registerTool({
         name: "filter_patient_type", title: "Filter patient type",
-        description: "Show all new patients, cash NEW patients only, or HMO/NEW patients only.",
-        inputSchema: { type: "object", properties: { patientType: { type: "string", enum: ["all", "new", "hmo"] } }, required: ["patientType"], additionalProperties: false },
+        description: "Show one patient type: new (NEW and HMO/NEW), scheduled, walk-in, returning (scheduled, walk-in, and HMO), home-service, send-in, clinical-trial, or all.",
+        inputSchema: { type: "object", properties: { patientType: { type: "string", enum: FILTER_VALUES } }, required: ["patientType"], additionalProperties: false },
         annotations: { readOnlyHint: false, untrustedContentHint: false },
         execute(input: unknown) {
           const value = (input as { patientType?: PatientTypeFilter })?.patientType;
-          if (!value || !["all", "new", "hmo"].includes(value)) throw new Error("Choose all, new, or hmo.");
+          if (!value || !FILTER_VALUES.includes(value)) throw new Error(`Choose one of: ${FILTER_VALUES.join(", ")}.`);
           setFilter(value); return { patientType: value };
         },
       }, { signal: lifecycle.signal });
@@ -208,7 +248,7 @@ export default function Home() {
           <div onDragEnter={(e) => { e.preventDefault(); setDragging(true); }} onDragOver={(e) => e.preventDefault()} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); void processFiles(Array.from(e.dataTransfer.files)); }} className={`relative flex min-h-[176px] items-center rounded-2xl border-2 border-dashed bg-[#fffefb] p-6 transition ${dragging ? "border-[#d8a321] bg-[#fff9e9]" : "border-[#d3bf8e]"}`}>
             <div className="flex w-full flex-col items-start gap-5 sm:flex-row sm:items-center">
               <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#fff2c8] text-[#8b6512]"><Upload size={26} /></div>
-              <div className="flex-1"><h2 className="text-xl font-bold tracking-tight">Upload your sales report</h2><p className="mt-1 max-w-2xl text-base leading-6 text-[#6a604f]">Use the same Detailed Sales Report format. You may upload the NEW and HMO/NEW files together.</p>
+              <div className="flex-1"><h2 className="text-xl font-bold tracking-tight">Upload your sales report</h2><p className="mt-1 max-w-2xl text-base leading-6 text-[#6a604f]">Use the Detailed Sales Report format. Upload the full report with all patient types, or several files together.</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3"><Button onClick={() => inputRef.current?.click()} className="bg-[#8b6512] text-white hover:bg-[#6f4e0a]"><FileSpreadsheet size={17} /> Choose Excel files</Button><span className="text-sm text-[#746957]">.xlsx or .xls</span></div>
                 <input ref={inputRef} type="file" multiple accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="sr-only" onChange={(e) => void processFiles(Array.from(e.target.files || []))} />
               </div>
@@ -218,21 +258,49 @@ export default function Home() {
         </section>
 
         {error && <Alert variant="destructive" className="mt-5 border-[#efb5bf] bg-[#fff7f8]"><AlertCircle className="h-4 w-4" /><AlertTitle>Check the workbook</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {files.length > 0 && <div className="mt-4 flex flex-wrap items-center gap-2" aria-label="Uploaded files">{files.map((file) => <span key={file.name} className="inline-flex items-center gap-2 rounded-full border border-[#dfd2b7] bg-[#fffefb] px-3 py-1.5 text-sm text-[#4c4436]"><CheckCircle2 size={15} className="text-[#8b6512]" /><span className="max-w-[260px] truncate">{file.name}</span><span className="text-[#7d725f]">{number.format(file.rows)} rows</span></span>)}</div>}
+        {files.length > 0 && <div className="mt-4 flex flex-wrap items-center gap-2" aria-label="Uploaded files">{files.map((file) => <span key={file.name} className="inline-flex items-center gap-2 rounded-full border border-[#dfd2b7] bg-[#fffefb] px-3 py-1.5 text-sm text-[#4c4436]"><CheckCircle2 size={15} className="text-[#8b6512]" /><span className="max-w-[260px] truncate">{file.name}</span><span className="text-[#7d725f]">{number.format(file.rows)} rows</span>{file.skipped > 0 && <span className="text-[#7d725f]" title="Rows with a patient type outside the dashboard's patient types, such as company accounts">· {number.format(file.skipped)} other</span>}</span>)}</div>}
 
         <section className="mt-6 flex flex-col justify-between gap-4 rounded-2xl border border-[#e2d7c2] bg-[#fffefb] p-5 md:flex-row md:items-end">
           <div><p className="text-sm font-semibold uppercase tracking-[0.08em] text-[#8b6512]">Reporting period</p><p className="mt-1 text-lg font-bold">{period}</p></div>
           <div className="grid gap-2 sm:grid-cols-[210px_240px] sm:items-end">
-            <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Patient type<Select value={filter} onValueChange={(value) => setFilter(value as PatientTypeFilter)}><SelectTrigger className="w-full bg-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All new patients</SelectItem><SelectItem value="new">NEW only</SelectItem><SelectItem value="hmo">HMO/NEW only</SelectItem></SelectContent></Select></label>
+            <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Patient type<Select value={filter} onValueChange={(value) => setFilter(value as PatientTypeFilter)}><SelectTrigger className="w-full bg-white"><SelectValue /></SelectTrigger><SelectContent>{PATIENT_TYPES.map((type) => <SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>)}<SelectItem value="all">All patient types</SelectItem></SelectContent></Select></label>
             <label className="grid gap-1.5 text-sm font-semibold text-[#514838]">Total marketing spend (PHP)<div className="relative"><PhilippinePeso className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8b6512]" size={16} /><Input min={0} step="100" type="number" value={marketingSpend || ""} placeholder="0.00" onChange={(e) => setMarketingSpend(Math.max(0, Number(e.target.value) || 0))} className="pl-9 text-base font-semibold" /></div></label>
           </div>
         </section>
 
         <section className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={<Users size={20} />} label="Unique new patients" value={hasData ? number.format(metrics.patients) : "—"} detail={hasData ? `${number.format(metrics.counts.NEW)} NEW · ${number.format(metrics.counts["HMO/NEW"])} HMO/NEW` : "Upload a workbook to begin"} />
+          <MetricCard icon={<Users size={20} />} label={`Unique patients · ${filterLabel(filter)}`} value={hasData ? number.format(metrics.patients) : "—"} detail={hasData ? patientDetail : "Upload a workbook to begin"} />
           <MetricCard icon={<BarChart3 size={20} />} label="Transactions" value={hasData ? number.format(metrics.transactions) : "—"} detail="Unique transaction numbers" />
           <MetricCard icon={<PhilippinePeso size={20} />} label="Patient revenue" value={hasData ? money.format(metrics.revenue) : "—"} detail="Sum of Total Payment" />
           <MetricCard accent icon={<HeartPulse size={20} />} label="Acquisition cost / patient" value={hasData && marketingSpend > 0 ? money.format(acquisitionCost) : "—"} detail={marketingSpend > 0 ? `${money.format(marketingSpend)} ÷ ${number.format(metrics.patients)} patients` : "Enter total marketing spend"} />
+        </section>
+
+        <section className="mt-5 overflow-hidden rounded-2xl border border-[#e2d7c2] bg-[#fffefb] shadow-sm">
+          <div className="border-b border-[#e8dfce] p-5 sm:p-6"><h2 className="text-lg font-bold">Patients by type</h2><p className="mt-1 text-sm text-[#756b59]">Unique patients, transactions, and revenue for each patient type. Select a row to filter the dashboard.</p></div>
+          <Table><TableHeader className="bg-[#faf5e9]"><TableRow><TableHead>Patient type</TableHead><TableHead>Includes</TableHead><TableHead className="text-right">Unique patients</TableHead><TableHead className="text-right">Transactions</TableHead><TableHead className="text-right">Revenue</TableHead><TableHead className="text-right">Share of revenue</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {patientTypes.types.map((type) => {
+                const active = filter === type.id;
+                const rollup = type.id === "returning";
+                return <TableRow key={type.id} onClick={() => setFilter(type.id)} aria-selected={active} className={`cursor-pointer ${active ? "bg-[#fff3d0] hover:bg-[#ffecb8]" : rollup ? "bg-[#faf7f0]" : ""}`}>
+                  <TableCell><button type="button" onClick={(e) => { e.stopPropagation(); setFilter(type.id); }} className={`text-left font-semibold ${active ? "text-[#6f4e0a]" : "text-[#463d30]"} ${rollup ? "font-extrabold" : ""}`}>{type.label}</button></TableCell>
+                  <TableCell className="text-[#756b59]">{hasData && type.groups.length > 1 ? groupBreakdown(type.groups, type.byGroup) : type.description}</TableCell>
+                  <TableCell className="text-right font-bold tabular-nums">{hasData ? number.format(type.patients) : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{hasData ? number.format(type.transactions) : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{hasData ? money.format(type.revenue) : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{hasData && patientTypes.total.revenue > 0 ? `${(type.revenue / patientTypes.total.revenue * 100).toFixed(1)}%` : "—"}</TableCell>
+                </TableRow>;
+              })}
+              <TableRow onClick={() => setFilter("all")} aria-selected={filter === "all"} className={`cursor-pointer border-t-2 border-[#e2d7c2] ${filter === "all" ? "bg-[#fff3d0] hover:bg-[#ffecb8]" : ""}`}>
+                <TableCell><button type="button" onClick={(e) => { e.stopPropagation(); setFilter("all"); }} className="text-left font-extrabold text-[#463d30]">ALL PATIENT TYPES</button></TableCell>
+                <TableCell className="text-[#756b59]">Each patient counted once</TableCell>
+                <TableCell className="text-right font-bold tabular-nums">{hasData ? number.format(patientTypes.total.patients) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums">{hasData ? number.format(patientTypes.total.transactions) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums">{hasData ? money.format(patientTypes.total.revenue) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums">{hasData ? "100%" : "—"}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </section>
 
         <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.86fr)_minmax(620px,1.4fr)]">
@@ -248,7 +316,7 @@ export default function Home() {
             </Table></div>
           </div>
         </section>
-        <footer className="mt-6 flex flex-col gap-2 border-t border-[#ddd2bd] py-5 text-sm text-[#756b59] sm:flex-row sm:items-center sm:justify-between"><p>Counting rule: one unique Patient Name equals one acquired patient.</p><p>Rows outside NEW and HMO/NEW are excluded automatically.</p></footer>
+        <footer className="mt-6 flex flex-col gap-2 border-t border-[#ddd2bd] py-5 text-sm text-[#756b59] sm:flex-row sm:items-center sm:justify-between"><p>Counting rule: one unique Patient Name equals one acquired patient.</p><p>RETURNING PATIENTS combines SCHEDULED, WALK-IN, and HMO. Other patient types are excluded.</p></footer>
       </div>
     </main>
   );
@@ -256,6 +324,10 @@ export default function Home() {
 
 function MetricCard({ icon, label, value, detail, accent = false }: { icon: React.ReactNode; label: string; value: string; detail: string; accent?: boolean }) {
   return <div className={`rounded-2xl border p-5 shadow-sm ${accent ? "border-[#d8a321] bg-[#4a3612] text-white" : "border-[#e2d7c2] bg-[#fffefb]"}`}><div className={`flex items-center gap-2 text-sm font-semibold ${accent ? "text-[#f0c864]" : "text-[#746957]"}`}>{icon}<span>{label}</span></div><p className="mt-4 text-2xl font-extrabold tracking-tight tabular-nums sm:text-[1.7rem]">{value}</p><p className={`mt-1 text-sm ${accent ? "text-[#f4e8c7]" : "text-[#807562]"}`}>{detail}</p></div>;
+}
+
+function groupBreakdown(groups: readonly PatientGroup[], counts: Map<PatientGroup, number>) {
+  return groups.map((group) => `${number.format(counts.get(group) ?? 0)} ${group}`).join(" · ");
 }
 
 function EmptyPanel() {
